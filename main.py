@@ -1,13 +1,11 @@
-import import http.server
+import http.server
 import os
 import socketserver
 import threading
 import time
-import pandas as pd
 import requests
-import yfinance as yf
 
-# 1. Render Port Binding (Dummy Web Server to prevent port scan timeout)
+# 1. Render Port Binding (Dummy Server)
 def run_server():
     port = int(os.environ.get("PORT", 10000))
     handler = http.server.SimpleHTTPRequestHandler
@@ -33,14 +31,13 @@ def send_telegram(message):
     except Exception as e:
         print(f"Telegram error: {e}")
 
-# 3. Startup Alert
+# 3. Startup Notification
 send_telegram("🚀 *Render Bot Active & Running Successfully!*")
 print("Bot Started on Render Server...")
 
 # 4. Main Scanning Loop
 def run_scanner():
     print("Scanning market...")
-    # Add your strategy/scanning logic here
 
 while True:
     run_scanner()
