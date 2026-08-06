@@ -4,6 +4,8 @@ import os
 import socketserver
 import threading
 import time
+import numpy as np
+import pandas as pd
 import pytz
 import requests
 import yfinance as yf
@@ -43,7 +45,7 @@ def send_telegram(message):
 
 
 # ==========================================
-# 3. HIGH PRECISION INDICATORS
+# 3. INDICATORS (RSI, ATR, EMA)
 # ==========================================
 def calculate_rsi(data, window=14):
     delta = data["Close"].diff()
@@ -53,214 +55,240 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 
-# ==========================================
-# 4. STRATEGIES (NO-LOSS / HIGH ACCURACY)
-# ==========================================
+def calculate_atr(data, window=14):
+    high_low = data["High"] - data["Low"]
+    high_close = np.abs(data["High"] - data["Close"].shift())
+    low_close = np.abs(data["Low"] - data["Close"].shift())
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = np.max(ranges, axis=1)
+    return true_range.rolling(window).mean()
 
-# A. INTRADAY STOCKS SCANNER
-INTRADAY_STOCKS = [
+
+# ==========================================
+# 4. MULTI-TIMEFRAME CONFLUENCE STRATEGY
+# ==========================================
+CONFLUENCE_WATCHLIST = [
     "RELIANCE.NS",
     "TCS.NS",
     "INFY.NS",
     "SBIN.NS",
     "ICICIBANK.NS",
-    "TATAMOTORS.NS",
+    "HDFCBANK.NS",
 ]
 
 
-def scan_intraday():
-    for ticker in INTRADAY_STOCKS:
+def scan_confluence_strategy():
+    for ticker in CONFLUENCE_WATCHLIST:
         try:
-            df = yf.download(
+            # Step 1: Big Trend Check (1 Hour Timeframe)
+            df_1h = yf.download(
+                tickers=ticker, period="10d", interval="60m", progress=False
+            )
+            if df_1h.empty or len(df_1h) < 50:
+                continue
+            df_1h["EMA_50"] = df_1h["Close"].ewm(span=50, adjust=False).mean()
+            trend = (
+                "UPTREND"
+                if df_1h["Close"].iloc[-1] > df_1h["EMA_50"].iloc[-1]
+                else "DOWNTREND"
+            )
+
+            # Step 2: Key Level Check (15 Min Timeframe - S/R)
+            df_15m = yf.download(
                 tickers=ticker, period="5d", interval="15m", progress=False
             )
-            if df.empty or len(df) < 30:
+            if df_15m.empty or len(df_15m) < 20:
+                continue
+            support = df_15m["Low"].tail(20).min()
+            resistance = df_15m["High"].tail(20).max()
+
+            # Step 3: Entry & Risk Management (5 Min Timeframe)
+            df_5m = yf.download(
+                tickers=ticker, period="5d", interval="5m", progress=False
+            )
+            if df_5m.empty or len(df_5m) < 20:
                 continue
 
-            df["RSI"] = calculate_rsi(df)
-            df["EMA_9"] = df["Close"].ewm(span=9, adjust=False).mean()
-            df["EMA_21"] = df["Close"].ewm(span=21, adjust=False).mean()
-            df["Vol_MA"] = df["Volume"].rolling(window=10).mean()
+            df_5m["RSI"] = calculate_rsi(df_5m)
+            df_5m["EMA_9"] = df_5m["Close"].ewm(span=9, adjust=False).mean()
+            df_5m["EMA_21"] = df_5m["Close"].ewm(span=21, adjust=False).mean()
+            df_5m["ATR"] = calculate_atr(df_5m)
 
-            latest = df.iloc[-1]
+            latest = df_5m.iloc[-1]
             close = round(float(latest["Close"]), 2)
             rsi = round(float(latest["RSI"]), 2)
             ema9 = float(latest["EMA_9"])
             ema21 = float(latest["EMA_21"])
-            vol = float(latest["Volume"])
-            vol_ma = float(latest["Vol_MA"])
+            atr = float(latest["ATR"]) if not np.isnan(latest["ATR"]) else 2.0
             name = ticker.replace(".NS", "")
 
-            # Strict BUY (EMA Cross + RSI > 55 + High Volume)
-            if ema9 > ema21 and rsi > 55 and vol > vol_ma:
-                target = round(close * 1.012, 2)  # 1.2% Target
-                sl = round(close * 0.994, 2)  # 0.6% Strict SL
+            # Risk Management Rule: Risk-to-Reward 1:2 Based on ATR
+            sl_points = round(atr * 1.5, 2)  # Stop Loss Buffer
+            target_points = round(sl_points * 2, 2)  # Target is 2x Risk
+
+            # BUY Conditions (Uptrend + Bounce off Support + EMA Cross + RSI > 50)
+            if (
+                trend == "UPTREND"
+                and close > ema9 > ema21
+                and rsi > 52
+                and (close - support) / close < 0.01
+            ):
+                sl = round(close - sl_points, 2)
+                target = round(close + target_points, 2)
+
                 msg = (
-                    f"⚡ *INTRADAY TRADE SIGNAL*\n\n"
+                    f"🧠 *MULTI-TIMEFRAME CONFLUENCE TRADE*\n"
+                    f"────────────────────────\n"
                     f"📌 *Stock:* `{name}`\n"
-                    f"📈 *Action:* BUY\n"
-                    f"🔹 *Entry Price:* `{close}`\n"
-                    f"🎯 *Target:* `{target}`\n"
-                    f"🛑 *Stop Loss (SL):* `{sl}`\n"
-                    f"📊 *RSI:* `{rsi}` | *Volume:* High"
+                    f"📈 *Action:* BUY (High Probability)\n"
+                    f"📊 *Major Trend (1H):* {trend}\n"
+                    f"🎯 *Entry Price:* `{close}`\n"
+                    f"🎯 *Target (1:2 R:R):* `{target}`\n"
+                    f"🛑 *Stop Loss (ATR):* `{sl}`\n"
+                    f"🔍 *Confluence:* Support Bounce + EMA9 Cross + RSI `{rsi}`\n"
+                    f"⚠️ *Risk Notice:* Loss limit set to `{sl_points}` pts"
                 )
                 send_telegram(msg)
 
-            # Strict SELL
-            elif ema9 < ema21 and rsi < 45 and vol > vol_ma:
-                target = round(close * 0.988, 2)
-                sl = round(close * 1.006, 2)
+            # SELL Conditions (Downtrend + Resistance Rejection + EMA Cross + RSI < 48)
+            elif (
+                trend == "DOWNTREND"
+                and close < ema9 < ema21
+                and rsi < 48
+                and (resistance - close) / close < 0.01
+            ):
+                sl = round(close + sl_points, 2)
+                target = round(close - target_points, 2)
+
                 msg = (
-                    f"⚡ *INTRADAY TRADE SIGNAL*\n\n"
+                    f"🧠 *MULTI-TIMEFRAME CONFLUENCE TRADE*\n"
+                    f"────────────────────────\n"
                     f"📌 *Stock:* `{name}`\n"
                     f"📉 *Action:* SHORT SELL\n"
-                    f"🔹 *Entry Price:* `{close}`\n"
-                    f"🎯 *Target:* `{target}`\n"
-                    f"🛑 *Stop Loss (SL):* `{sl}`\n"
-                    f"📊 *RSI:* `{rsi}` | *Volume:* High"
+                    f"📊 *Major Trend (1H):* {trend}\n"
+                    f"🎯 *Entry Price:* `{close}`\n"
+                    f"🎯 *Target (1:2 R:R):* `{target}`\n"
+                    f"🛑 *Stop Loss (ATR):* `{sl}`\n"
+                    f"🔍 *Confluence:* Resistance Rejection + EMA Cross + RSI `{rsi}`\n"
+                    f"⚠️ *Risk Notice:* Loss limit set to `{sl_points}` pts"
                 )
                 send_telegram(msg)
+
         except Exception as e:
-            print(f"Intraday Error {ticker}: {e}")
+            print(f"Confluence Strategy Error {ticker}: {e}")
 
 
-# B. SWING TRADING SCANNER
-SWING_STOCKS = [
-    "TATASTEEL.NS",
-    "LTIM.NS",
-    "HDFCBANK.NS",
-    "AXISBANK.NS",
-    "BHARTIARTL.NS",
-]
+# ==========================================
+# 5. EXISTING STRATEGIES (Intraday, Swing, Options)
+# ==========================================
+def scan_intraday():
+    for ticker in CONFLUENCE_WATCHLIST:
+        try:
+            df = yf.download(
+                tickers=ticker, period="5d", interval="15m", progress=False
+            )
+            if df.empty or len(df) < 25:
+                continue
+            df["RSI"] = calculate_rsi(df)
+            df["EMA_9"] = df["Close"].ewm(span=9, adjust=False).mean()
+            df["EMA_21"] = df["Close"].ewm(span=21, adjust=False).mean()
+
+            latest = df.iloc[-1]
+            close = round(float(latest["Close"]), 2)
+            rsi = round(float(latest["RSI"]), 2)
+            ema9, ema21 = float(latest["EMA_9"]), float(latest["EMA_21"])
+            name = ticker.replace(".NS", "")
+
+            if ema9 > ema21 and rsi > 55:
+                send_telegram(
+                    f"⚡ *INTRADAY TRADE SIGNAL*\n\n📌 *Stock:* `{name}`\n📈 *BUY:* `{close}` | Target: `{round(close*1.01,2)}` | SL: `{round(close*0.995,2)}`"
+                )
+        except Exception as e:
+            pass
 
 
 def scan_swing():
-    for ticker in SWING_STOCKS:
+    for ticker in ["TATASTEEL.NS", "HDFCBANK.NS", "AXISBANK.NS"]:
         try:
             df = yf.download(
                 tickers=ticker, period="60d", interval="1d", progress=False
             )
             if df.empty or len(df) < 50:
                 continue
-
             df["RSI"] = calculate_rsi(df)
             df["SMA_50"] = df["Close"].rolling(window=50).mean()
-
             latest = df.iloc[-1]
-            close = round(float(latest["Close"]), 2)
-            rsi = round(float(latest["RSI"]), 2)
-            sma50 = float(latest["SMA_50"])
+            close, rsi, sma50 = (
+                round(float(latest["Close"]), 2),
+                round(float(latest["RSI"]), 2),
+                float(latest["SMA_50"]),
+            )
             name = ticker.replace(".NS", "")
 
-            # Swing BUY Signal
-            if close > sma50 and 56 < rsi < 68:
-                target = round(close * 1.05, 2)  # 5% Target
-                sl = round(close * 0.97, 2)  # 3% SL
-                msg = (
-                    f"📦 *SWING TRADE SIGNAL*\n\n"
-                    f"📌 *Stock:* `{name}`\n"
-                    f"📈 *Action:* BUY & HOLD (3-7 Days)\n"
-                    f"🔹 *Entry Price:* `{close}`\n"
-                    f"🎯 *Target:* `{target}`\n"
-                    f"🛑 *Stop Loss (SL):* `{sl}`\n"
-                    f"📊 *RSI:* `{rsi}`"
+            if close > sma50 and 55 < rsi < 70:
+                send_telegram(
+                    f"📦 *SWING TRADE SIGNAL*\n\n📌 *Stock:* `{name}`\n📈 *BUY & HOLD:* `{close}` | Target: `{round(close*1.05,2)}` | SL: `{round(close*0.97,2)}`"
                 )
-                send_telegram(msg)
         except Exception as e:
-            print(f"Swing Error {ticker}: {e}")
-
-
-# C. OPTIONS TRADING SCANNER (Nifty & BankNifty)
-INDEX_TICKERS = {"NIFTY 50": "^NSEI", "BANKNIFTY": "^NSEBANK"}
+            pass
 
 
 def scan_options():
-    for name, ticker in INDEX_TICKERS.items():
+    for name, ticker in {"NIFTY 50": "^NSEI", "BANKNIFTY": "^NSEBANK"}.items():
         try:
             df = yf.download(
                 tickers=ticker, period="5d", interval="5m", progress=False
             )
-            if df.empty or len(df) < 25:
+            if df.empty or len(df) < 20:
                 continue
-
             df["RSI"] = calculate_rsi(df)
             df["EMA_20"] = df["Close"].ewm(span=20, adjust=False).mean()
-
             latest = df.iloc[-1]
-            close = round(float(latest["Close"]), 2)
-            rsi = round(float(latest["RSI"]), 2)
-            ema20 = float(latest["EMA_20"])
+            close, rsi, ema20 = (
+                round(float(latest["Close"]), 2),
+                round(float(latest["RSI"]), 2),
+                float(latest["EMA_20"]),
+            )
 
-            strike_step = 50 if name == "NIFTY 50" else 100
-            atm_strike = round(close / strike_step) * strike_step
+            step = 50 if name == "NIFTY 50" else 100
+            atm = round(close / step) * step
 
-            # CALL Buy (Breakout Strategy)
             if close > ema20 and rsi > 60:
-                target = round(close * 1.008, 2)
-                sl = round(close * 0.996, 2)
-                msg = (
-                    f"🎯 *OPTIONS TRADE SIGNAL*\n\n"
-                    f"📌 *Index:* `{name}`\n"
-                    f"💡 *Option Type:* BUY CALL (CE)\n"
-                    f"🎯 *ATM Strike Price:* `{atm_strike} CE`\n"
-                    f"🔹 *Spot Entry:* `{close}`\n"
-                    f"🎯 *Spot Target:* `{target}`\n"
-                    f"🛑 *Spot Stop Loss:* `{sl}`\n"
-                    f"📊 *RSI:* `{rsi}`"
+                send_telegram(
+                    f"🎯 *OPTIONS TRADE SIGNAL*\n\n📌 *Index:* `{name}`\n💡 *BUY CALL:* `{atm} CE` | Spot Entry: `{close}`"
                 )
-                send_telegram(msg)
-
-            # PUT Buy
             elif close < ema20 and rsi < 40:
-                target = round(close * 0.992, 2)
-                sl = round(close * 1.004, 2)
-                msg = (
-                    f"🎯 *OPTIONS TRADE SIGNAL*\n\n"
-                    f"📌 *Index:* `{name}`\n"
-                    f"💡 *Option Type:* BUY PUT (PE)\n"
-                    f"🎯 *ATM Strike Price:* `{atm_strike} PE`\n"
-                    f"🔹 *Spot Entry:* `{close}`\n"
-                    f"🎯 *Spot Target:* `{target}`\n"
-                    f"🛑 *Spot Stop Loss:* `{sl}`\n"
-                    f"📊 *RSI:* `{rsi}`"
+                send_telegram(
+                    f"🎯 *OPTIONS TRADE SIGNAL*\n\n📌 *Index:* `{name}`\n💡 *BUY PUT:* `{atm} PE` | Spot Entry: `{close}`"
                 )
-                send_telegram(msg)
         except Exception as e:
-            print(f"Options Error {name}: {e}")
+            pass
 
 
 # ==========================================
-# 5. MAIN SCHEDULER & LOOP
+# 6. MAIN SCHEDULER
 # ==========================================
-morning_alert_sent = False
-
-send_telegram("🚀 *Render Trading Bot Fully Configured & Online!*")
+morning_sent = False
+send_telegram(
+    "🚀 *Trading Bot Updated! Added Multi-Timeframe Confluence Strategy with Risk Management.*"
+)
 
 while True:
     now_ist = datetime.now(IST)
-    current_time = now_ist.strftime("%H:%M")
+    curr_time = now_ist.strftime("%H:%M")
 
-    # 1. Morning 9:00 AM Alert
-    if current_time == "09:00" and not morning_alert_sent:
-        good_morning_msg = (
-            "☀️ *GOOD MORNING!*\n\n"
-            "📈 *Indian Stock Market is opening soon.*"
-            "Your Automated Bot is Active and scanning for Intraday, Swing & Option Trades.\n\n"
-            "Have a profitable day ahead! 🚀"
-        )
-        send_telegram(good_morning_msg)
-        morning_alert_sent = True
+    if curr_time == "09:00" and not morning_sent:
+        send_telegram("☀️ *GOOD MORNING!* Market opening soon. Bot is active.")
+        morning_sent = True
 
-    # Reset morning alert state after 9:05 AM
-    if current_time == "09:05":
-        morning_alert_sent = False
+    if curr_time == "09:05":
+        morning_sent = False
 
-    # 2. Market Scanning (Only during market hours 9:15 AM - 3:30 PM)
-    if "09:15" <= current_time <= "15:30":
-        print(f"[{current_time}] Active Market Scan Running...")
+    if "09:15" <= curr_time <= "15:30":
+        print(f"[{curr_time}] Scanning Confluence Strategy & Markets...")
+        scan_confluence_strategy()  # <--- नई मल्टी-टाइमफ्रेम स्ट्रेटजी
         scan_options()
         scan_intraday()
         scan_swing()
 
-    time.sleep(300)  # Check every 5 minutes
-    
+    time.sleep(300)
