@@ -10,18 +10,35 @@ import pytz
 import requests
 import yfinance as yf
 
+# ==========================================
+# 1. RENDER PORT BINDING & KEEP-ALIVE PINGER
+# ==========================================
+PORT = int(os.environ.get("PORT", 10000))
+APP_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 
-# ==========================================
-# 1. RENDER PORT BINDING (Dummy Server)
-# ==========================================
+
 def run_server():
-    port = int(os.environ.get("PORT", 10000))
     handler = http.server.SimpleHTTPRequestHandler
-    with socketserver.TCPServer(("", port), handler) as httpd:
+    with socketserver.TCPServer(("", PORT), handler) as httpd:
         httpd.serve_forever()
 
 
 threading.Thread(target=run_server, daemon=True).start()
+
+
+# Server को स्लीप मोड में जाने से रोकने के लिए Self-Pinger
+def keep_alive():
+    while True:
+        time.sleep(600)  # हर 10 मिनट में पिंंग करेगा
+        if APP_URL:
+            try:
+                requests.get(APP_URL)
+                print("[Keep-Alive] Pinged self to stay active.")
+            except Exception as e:
+                print(f"[Keep-Alive Error]: {e}")
+
+
+threading.Thread(target=keep_alive, daemon=True).start()
 
 # ==========================================
 # 2. TELEGRAM CREDENTIALS
@@ -44,10 +61,9 @@ def send_telegram(message):
         print(f"Telegram error: {e}")
 
 
-# Safe Downloader with Header & Longer Delay to Prevent Rate Limit
 def safe_download(ticker, period, interval):
     try:
-        time.sleep(3.5)  # Safe delay to prevent rate limit
+        time.sleep(3)  # Rate limit delay
         session = requests.Session()
         session.headers.update({
             "User-Agent": (
@@ -65,7 +81,7 @@ def safe_download(ticker, period, interval):
 
 
 # ==========================================
-# 3. TECHNICAL INDICATORS
+# 3. INDICATORS
 # ==========================================
 def calculate_rsi(data, window=14):
     delta = data["Close"].diff()
@@ -85,7 +101,7 @@ def calculate_atr(data, window=14):
 
 
 # ==========================================
-# 4. WATCHLIST (NIFTY 100 Selected Top Stocks)
+# 4. WATCHLIST
 # ==========================================
 NIFTY_100_WATCHLIST = [
     "RELIANCE.NS",
@@ -102,10 +118,10 @@ NIFTY_100_WATCHLIST = [
 
 
 # ==========================================
-# 5. ALL STRATEGIES IN SINGLE PASS (To Save Rate Limits)
+# 5. ALL STRATEGIES SCANNING
 # ==========================================
 def scan_all_strategies():
-    # 1. Option Scanning (Indices)
+    # 1. Options Check
     for name, ticker in {"NIFTY 50": "^NSEI", "BANKNIFTY": "^NSEBANK"}.items():
         try:
             df = safe_download(ticker, period="5d", interval="5m")
@@ -137,10 +153,9 @@ def scan_all_strategies():
         except Exception as e:
             print(f"Options error for {name}: {e}")
 
-    # 2. Stock Strategies (Confluence + Intraday + Swing)
+    # 2. Stocks Confluence & Intraday
     for ticker in NIFTY_100_WATCHLIST:
         try:
-            # 5 Min Data
             df_5m = safe_download(ticker, period="5d", interval="5m")
             if df_5m.empty or len(df_5m) < 20:
                 continue
@@ -166,7 +181,7 @@ def scan_all_strategies():
                     f" `{round(close*0.995, 2)}`"
                 )
 
-            # Confluence Check (1H Higher Trend)
+            # Confluence Check (1H Trend)
             df_1h = safe_download(ticker, period="10d", interval="60m")
             if not df_1h.empty and len(df_1h) >= 50:
                 df_1h["EMA_50"] = (
@@ -225,9 +240,7 @@ def scan_all_strategies():
 # 6. MAIN SCHEDULER
 # ==========================================
 morning_sent = False
-send_telegram(
-    "🚀 *Rate Limit Fix Applied (Optimized Scan)! Bot is fully running.*"
-)
+send_telegram("🚀 *Keep-Alive Logic Added! Bot is Active and Awake.*")
 
 while True:
     now_ist = datetime.now(IST)
@@ -241,7 +254,7 @@ while True:
         morning_sent = False
 
     if "09:15" <= curr_time <= "15:30":
-        print(f"[{curr_time}] Optimized Market Scanning Running...")
+        print(f"[{curr_time}] Active Market Scanning Running...")
         scan_all_strategies()
 
     time.sleep(300)
