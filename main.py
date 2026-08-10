@@ -57,11 +57,8 @@ TELEGRAM_CHAT_ID = "5660614483"
 IST = pytz.timezone("Asia/Kolkata")
 
 
-# ============================================================
-# 4. TELEGRAM FUNCTION
-# ============================================================
 def send_telegram(message):
-    url = "https://api.telegram.org/bot" + TELEGRAM_BOT_TOKEN + "/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
@@ -76,9 +73,6 @@ def send_telegram(message):
         return False
 
 
-# ============================================================
-# 5. ACTIVE TRADES TRACKER (FOR SL / TARGET NOTIFICATION)
-# ============================================================
 active_trades = {}
 sent_alerts = {}
 
@@ -86,38 +80,47 @@ sent_alerts = {}
 def is_duplicate_alert(symbol, alert_type, cooldown_minutes=45):
     key = f"{symbol}_{alert_type}"
     now = time.time()
-    if key in sent_alerts:
-        if now - sent_alerts[key] < cooldown_minutes * 60:
-            return True
+    if key in sent_alerts and (now - sent_alerts[key] < cooldown_minutes * 60):
+        return True
     sent_alerts[key] = now
     return False
 
 
 # ============================================================
-# 6. INDIAN WATCHLIST (ALL RATES IN ₹ INR)
+# 4. WATCHLIST (WORKING YAHOO TICKERS)
 # ============================================================
 WATCHLIST = {
-    # NSE STOCKS (₹ INR)
-    "PNB.NS": "PNB (NSE)",
-    "GAIL.NS": "GAIL (NSE)",
-    "IOC.NS": "IOC (NSE)",
-    "FEDERALBNK.NS": "FEDERAL BANK (NSE)",
-    "ASHOKLEY.NS": "ASHOK LEYLAND (NSE)",
-    "BPCL.NS": "BPCL (NSE)",
-    "NTPC.NS": "NTPC (NSE)",
-    "PFC.NS": "PFC (NSE)",
-    "BHEL.NS": "BHEL (NSE)",
-    "SBIN.NS": "SBI (NSE)",
-    # MCX COMMODITIES IN INDIAN RUPEES (₹ INR)
-    "NATURALGAS1.MCX": "NATURAL GAS (MCX ₹)",
-    "CRUDEOIL1.MCX": "CRUDE OIL (MCX ₹)",
-    "SILVER1.MCX": "SILVER (MCX ₹)",
-    "GOLD1.MCX": "GOLD (MCX ₹)",
+    # STOCKS (NSE ₹)
+    "PNB.NS": {"name": "PNB (NSE)", "type": "stock"},
+    "GAIL.NS": {"name": "GAIL (NSE)", "type": "stock"},
+    "IOC.NS": {"name": "IOC (NSE)", "type": "stock"},
+    "FEDERALBNK.NS": {"name": "FEDERAL BANK (NSE)", "type": "stock"},
+    "ASHOKLEY.NS": {"name": "ASHOK LEYLAND (NSE)", "type": "stock"},
+    "BPCL.NS": {"name": "BPCL (NSE)", "type": "stock"},
+    "NTPC.NS": {"name": "NTPC (NSE)", "type": "stock"},
+    "PFC.NS": {"name": "PFC (NSE)", "type": "stock"},
+    "BHEL.NS": {"name": "BHEL (NSE)", "type": "stock"},
+    "SBIN.NS": {"name": "SBI (NSE)", "type": "stock"},
+    # COMMODITIES (Yahoo Tickers with INR conversion)
+    "NG=F": {"name": "NATURAL GAS (₹ Equivalent)", "type": "commodity"},
+    "CL=F": {"name": "CRUDE OIL (₹ Equivalent)", "type": "commodity"},
+    "SI=F": {"name": "SILVER (₹ Equivalent)", "type": "commodity"},
+    "GC=F": {"name": "GOLD (₹ Equivalent)", "type": "commodity"},
 }
 
 
+def get_usd_inr_rate():
+    try:
+        usd_data = yf.Ticker("INR=X").history(period="1d")
+        if not usd_data.empty:
+            return float(usd_data["Close"].iloc[-1])
+    except Exception:
+        pass
+    return 83.5  # Approximate fallback rate
+
+
 # ============================================================
-# 7. INDICATOR CALCULATIONS
+# 5. INDICATOR CALCULATIONS
 # ============================================================
 def calculate_vwap(df):
     data = df.copy()
@@ -191,7 +194,7 @@ def bearish_candle(row):
 
 
 # ============================================================
-# 8. SCAN MARKETS & TRACK ACTIVE POSITIONS
+# 6. SCAN MARKETS
 # ============================================================
 def scan_markets():
     session = requests.Session()
@@ -200,33 +203,34 @@ def scan_markets():
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         )
     })
+    usd_inr = get_usd_inr_rate()
 
-    for ticker, display_name in WATCHLIST.items():
+    for ticker, info in WATCHLIST.items():
+        display_name = info["name"]
+        asset_type = info["type"]
+
         try:
             ticker_obj = yf.Ticker(ticker, session=session)
             df = ticker_obj.history(
                 period="5d", interval="5m", auto_adjust=False, prepost=False
             )
 
-            if df.empty:
-                # Fallback for MCX ticker symbols if standard failed
-                if ".MCX" in ticker:
-                    alt_ticker = ticker.replace("1.MCX", "=F")
-                    ticker_obj = yf.Ticker(alt_ticker, session=session)
-                    df = ticker_obj.history(
-                        period="5d",
-                        interval="5m",
-                        auto_adjust=False,
-                        prepost=False,
-                    )
-
             if df.empty or len(df) < 50:
+                print(f"No data for {ticker}")
                 continue
 
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
 
             df = df.dropna(subset=["Open", "High", "Low", "Close"])
+
+            # Adjust commodity values to INR if needed
+            multiplier = usd_inr if asset_type == "commodity" else 1.0
+
+            df["Open"] = df["Open"] * multiplier
+            df["High"] = df["High"] * multiplier
+            df["Low"] = df["Low"] * multiplier
+            df["Close"] = df["Close"] * multiplier
 
             df["VWAP"] = calculate_vwap(df)
             df["RSI"] = calculate_rsi(df["Close"])
@@ -249,9 +253,7 @@ def scan_markets():
             volume = float(latest["Volume"])
             volume_ma = float(latest["Volume_MA"])
 
-            # ----------------------------------------------------
-            # 8A. CHECK ACTIVE TRADES FOR SL / TARGET HIT
-            # ----------------------------------------------------
+            # Check SL / Target for active positions
             if display_name in active_trades:
                 trade = active_trades[display_name]
                 trade_type = trade["type"]
@@ -266,7 +268,7 @@ def scan_markets():
                             f"📌 *Asset:* `{display_name}`\n"
                             f"💰 *Entry:* `₹{trade['entry']:.2f}`\n"
                             f"🎯 *Target Hit:* `₹{close:.2f}`\n"
-                            f"✅ *Profit per share/lot:* `+₹{close - trade['entry']:.2f}`"
+                            f"✅ *Profit:* `+₹{close - trade['entry']:.2f}`"
                         )
                         del active_trades[display_name]
                         continue
@@ -277,7 +279,7 @@ def scan_markets():
                             f"📌 *Asset:* `{display_name}`\n"
                             f"💰 *Entry:* `₹{trade['entry']:.2f}`\n"
                             f"🔻 *SL Hit:* `₹{close:.2f}`\n"
-                            f"⚠️ *Loss per share/lot:* `-₹{trade['entry'] - close:.2f}`"
+                            f"⚠️ *Loss:* `-₹{trade['entry'] - close:.2f}`"
                         )
                         del active_trades[display_name]
                         continue
@@ -290,7 +292,7 @@ def scan_markets():
                             f"📌 *Asset:* `{display_name}`\n"
                             f"💰 *Entry:* `₹{trade['entry']:.2f}`\n"
                             f"🎯 *Target Hit:* `₹{close:.2f}`\n"
-                            f"✅ *Profit per share/lot:* `+₹{trade['entry'] - close:.2f}`"
+                            f"✅ *Profit:* `+₹{trade['entry'] - close:.2f}`"
                         )
                         del active_trades[display_name]
                         continue
@@ -301,27 +303,21 @@ def scan_markets():
                             f"📌 *Asset:* `{display_name}`\n"
                             f"💰 *Entry:* `₹{trade['entry']:.2f}`\n"
                             f"🔻 *SL Hit:* `₹{close:.2f}`\n"
-                            f"⚠️ *Loss per share/lot:* `-₹{close - trade['entry']:.2f}`"
+                            f"⚠️ *Loss:* `-₹{close - trade['entry']:.2f}`"
                         )
                         del active_trades[display_name]
                         continue
 
-            # ----------------------------------------------------
-            # 8B. GENERATE NEW SIGNALS
-            # ----------------------------------------------------
+            # Signal evaluation
             bullish_cross = prev_ema9 <= prev_ema21 and ema9 > ema21
             bearish_cross = prev_ema9 >= prev_ema21 and ema9 < ema21
-
             above_vwap = close > vwap
             below_vwap = close < vwap
-
             bullish_rsi = 54 <= rsi <= 68
             bearish_rsi = 32 <= rsi <= 46
-
             volume_confirmed = volume >= volume_ma * 1.20
             bullish_confirmed = bullish_candle(latest)
             bearish_confirmed = bearish_candle(latest)
-
             bullish_trend = ema9 > ema21 and close > ema9
             bearish_trend = ema9 < ema21 and close < ema9
 
@@ -345,7 +341,6 @@ def scan_markets():
             sl_points = max(atr * 1.20, close * 0.004)
             target_points = sl_points * 2
 
-            # BUY ALERT
             if (
                 buy_score >= 6
                 and above_vwap
@@ -357,7 +352,6 @@ def scan_markets():
                 if not is_duplicate_alert(display_name, "BUY"):
                     sl = round(close - sl_points, 2)
                     target = round(close + target_points, 2)
-
                     active_trades[display_name] = {
                         "type": "BUY",
                         "entry": close,
@@ -376,11 +370,10 @@ def scan_markets():
                         f"🛑 *Stop Loss:* `₹{sl:.2f}` (-₹{close - sl:.2f})\n"
                         f"⚖️ *Risk/Reward:* 1:2\n"
                         f"⭐ *Score:* `{buy_score}/7`\n\n"
-                        "🔄 *Bot will track & notify on Target or SL Hit!*"
+                        "🔄 *Bot tracking Target & SL Hit!*"
                     )
                     send_telegram(message)
 
-            # SELL ALERT
             elif (
                 sell_score >= 6
                 and below_vwap
@@ -392,7 +385,6 @@ def scan_markets():
                 if not is_duplicate_alert(display_name, "SELL"):
                     sl = round(close + sl_points, 2)
                     target = round(close - target_points, 2)
-
                     active_trades[display_name] = {
                         "type": "SELL",
                         "entry": close,
@@ -411,7 +403,7 @@ def scan_markets():
                         f"🛑 *Stop Loss:* `₹{sl:.2f}` (+₹{sl - close:.2f})\n"
                         f"⚖️ *Risk/Reward:* 1:2\n"
                         f"⭐ *Score:* `{sell_score}/7`\n\n"
-                        "🔄 *Bot will track & notify on Target or SL Hit!*"
+                        "🔄 *Bot tracking Target & SL Hit!*"
                     )
                     send_telegram(message)
 
@@ -422,29 +414,22 @@ def scan_markets():
 
 
 # ============================================================
-# 9. STARTUP MESSAGE & MAIN LOOP
+# 7. MAIN LOOP
 # ============================================================
-send_telegram(
-    "🚀 *INDIAN MARKET & COMMODITY SCANNER ACTIVATED!*\n\n"
-    "🇮🇳 Currency: Indian Rupees (₹ INR / MCX)\n"
-    "📊 Timeframe: 5 Minutes\n"
-    "🎯 Auto Target & SL Tracker: ACTIVATED ✅\n\n"
-    "Scanner is now live."
-)
+send_telegram("🚀 *SCANNER FIXED & RUNNING (NO ERRORS)*")
 
 while True:
     try:
         now_ist = datetime.now(IST)
-        current_time = now_ist.strftime("%H:%M:%S")
-
         print(
-            f"[{current_time} IST] Scanning Indian Stocks & MCX Commodities..."
+            f"[{now_ist.strftime('%H:%M:%S')} IST] Scanning Indian Stocks &"
+            " Commodities..."
         )
 
         if is_market_open():
             scan_markets()
         else:
-            print("Outside configured market window.")
+            print("Outside market hours.")
 
         time.sleep(180)
 
