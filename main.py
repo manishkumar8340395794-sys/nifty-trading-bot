@@ -28,7 +28,7 @@ threading.Thread(target=run_server, daemon=True).start()
 
 def keep_alive():
     while True:
-        time.sleep(600)  # Self ping every 10 mins
+        time.sleep(600)
         if APP_URL:
             try:
                 requests.get(APP_URL)
@@ -61,7 +61,7 @@ def send_telegram(message):
         print(f"Telegram Error: {e}")
 
 
-def is_duplicate_alert(symbol, alert_type, cooldown_minutes=30):
+def is_duplicate_alert(symbol, alert_type, cooldown_minutes=45):
     key = f"{symbol}_{alert_type}"
     now = time.time()
     if key in sent_alerts:
@@ -72,7 +72,7 @@ def is_duplicate_alert(symbol, alert_type, cooldown_minutes=30):
 
 
 # ==========================================
-# 3. BUDGET WATCHLIST (UNDER ~₹500 STOCKS)
+# 3. HIGH ACCURACY BUDGET WATCHLIST (UNDER ~₹600)
 # ==========================================
 BUDGET_WATCHLIST = [
     "PNB.NS",  # ~₹100
@@ -85,13 +85,19 @@ BUDGET_WATCHLIST = [
     "PFC.NS",  # ~₹400 - ₹480
     "REC.NS",  # ~₹450 - ₹520
     "BHEL.NS",  # ~₹250 - ₹300
-    "SBIN.NS",  # Budget Heavy Bank
+    "SBIN.NS",  # Banking Heavy
 ]
 
 
 # ==========================================
-# 4. TECHNICAL INDICATORS
+# 4. TECHNICAL INDICATORS (VWAP, RSI, ATR, EMA)
 # ==========================================
+def calculate_vwap(df):
+    v = df["Volume"]
+    tp = (df["High"] + df["Low"] + df["Close"]) / 3
+    return (tp * v).cumsum() / v.cumsum()
+
+
 def calculate_rsi(series, window=14):
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
@@ -110,28 +116,28 @@ def calculate_atr(df, window=14):
 
 
 # ==========================================
-# 5. SAFE LIVE MARKET SCANNER
+# 5. PROFIT STRATEGY ENGINE
 # ==========================================
 def scan_budget_stocks():
     session = requests.Session()
     session.headers.update({
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            " (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
     })
 
     for ticker in BUDGET_WATCHLIST:
         try:
             t = yf.Ticker(ticker, session=session)
-            df_5m = t.history(period="3d", interval="5m")
+            df_5m = t.history(period="2d", interval="5m")
 
-            if df_5m.empty or len(df_5m) < 25:
+            if df_5m.empty or len(df_5m) < 30:
                 continue
 
             name = ticker.replace(".NS", "")
 
-            # Technical Calculation
+            # Indicator Calculations
+            df_5m["VWAP"] = calculate_vwap(df_5m)
             df_5m["RSI"] = calculate_rsi(df_5m["Close"])
             df_5m["EMA_9"] = df_5m["Close"].ewm(span=9, adjust=False).mean()
             df_5m["EMA_21"] = df_5m["Close"].ewm(span=21, adjust=False).mean()
@@ -141,13 +147,13 @@ def scan_budget_stocks():
             prev = df_5m.iloc[-2]
 
             close = round(float(latest["Close"]), 2)
+            vwap = round(float(latest["VWAP"]), 2)
             rsi = round(float(latest["RSI"]), 2)
             ema9 = float(latest["EMA_9"])
             ema21 = float(latest["EMA_21"])
             prev_ema9 = float(prev["EMA_9"])
             prev_ema21 = float(prev["EMA_21"])
 
-            # Filter out expensive stocks dynamically
             if close > 850:
                 continue
 
@@ -157,59 +163,68 @@ def scan_budget_stocks():
                 else (close * 0.005)
             )
 
-            # Tight Stoploss and Safe 1:2 Target
-            sl_points = round(atr * 1.1, 2)
+            # Precise ATR-based Stoploss & Target (1:2 Risk-Reward)
+            sl_points = round(max(atr * 1.2, close * 0.005), 2)
             target_points = round(sl_points * 2.0, 2)
 
-            # 🟢 HIGH ACCURACY BUY SIGNAL
-            if prev_ema9 <= prev_ema21 and ema9 > ema21 and 52 <= rsi <= 70:
-                if not is_duplicate_alert(name, "BUY", 30):
+            # 🟢 HIGH ACCURACY BUY STRATEGY:
+            # 1. Price is ABOVE VWAP
+            # 2. 9 EMA crosses ABOVE 21 EMA
+            # 3. RSI is in Momentum Zone (55 to 68)
+            if close > vwap and prev_ema9 <= prev_ema21 and ema9 > ema21 and 55 <= rsi <= 68:
+                if not is_duplicate_alert(name, "BUY", 45):
                     sl = round(close - sl_points, 2)
                     target = round(close + target_points, 2)
-                    risk = round(close - sl, 2)
+                    risk_per_share = round(close - sl, 2)
+                    profit_per_share = round(target - close, 2)
 
                     send_telegram(
-                        f"🎯 *LOW RISK BUDGET BUY ALERT*\n────────────────────────\n📌"
-                        f" *Stock:* `{name}`\n💰 *Price:* `₹{close}` (Under"
-                        f" Budget)\n📈 *Signal:* BUY (EMA Cross + Safe RSI)\n📊"
-                        f" *RSI:* `{rsi}`\n\n🎯 *Target:* `₹{target}`\n🛑 *Stop"
-                        f" Loss:* `₹{sl}`\n⚠️ *Max Risk/Share:* `₹{risk}`"
-                        " (Minimal Loss)"
+                        f"🔥 *HIGH-PROFIT BUY ALERT*\n────────────────────────\n📌"
+                        f" *Stock:* `{name}`\n💰 *Entry Price:* `₹{close}`\n📊"
+                        f" *VWAP:* `₹{vwap}` (Price Above VWAP ✅)\n📈 *RSI"
+                        f" Momentum:* `{rsi}`\n\n🎯 *Target:* `₹{target}`"
+                        f" (+₹{profit_per_share})\n🛑 *Stop Loss:* `₹{sl}`"
+                        f" (-₹{risk_per_share})\n⚖️ *Risk-Reward Ratio:* 1:2"
+                        " (High Accuracy Setup)"
                     )
 
-            # 🔴 HIGH ACCURACY SHORT SIGNAL
-            elif prev_ema9 >= prev_ema21 and ema9 < ema21 and 30 <= rsi <= 48:
-                if not is_duplicate_alert(name, "SELL", 30):
+            # 🔴 HIGH ACCURACY SHORT/SELL STRATEGY:
+            # 1. Price is BELOW VWAP
+            # 2. 9 EMA crosses BELOW 21 EMA
+            # 3. RSI is in Weak Zone (32 to 45)
+            elif close < vwap and prev_ema9 >= prev_ema21 and ema9 < ema21 and 32 <= rsi <= 45:
+                if not is_duplicate_alert(name, "SELL", 45):
                     sl = round(close + sl_points, 2)
                     target = round(close - target_points, 2)
-                    risk = round(sl - close, 2)
+                    risk_per_share = round(sl - close, 2)
+                    profit_per_share = round(close - target, 2)
 
                     send_telegram(
-                        f"🎯 *LOW RISK BUDGET SHORT ALERT*\n────────────────────────\n📌"
-                        f" *Stock:* `{name}`\n💰 *Price:* `₹{close}` (Under"
-                        f" Budget)\n📉 *Signal:* SHORT SELL\n📊 *RSI:* `{rsi}`\n\n🎯"
-                        f" *Target:* `₹{target}`\n🛑 *Stop Loss:* `₹{sl}`\n⚠️"
-                        f" *Max Risk/Share:* `₹{risk}` (Minimal Loss)"
+                        f"🔥 *HIGH-PROFIT SHORT ALERT*\n────────────────────────\n📌"
+                        f" *Stock:* `{name}`\n💰 *Entry Price:* `₹{close}`\n📊"
+                        f" *VWAP:* `₹{vwap}` (Price Below VWAP 🔻)\n📉 *RSI"
+                        f" Momentum:* `{rsi}`\n\n🎯 *Target:* `₹{target}`"
+                        f" (+₹{profit_per_share})\n🛑 *Stop Loss:* `₹{sl}`"
+                        f" (-₹{risk_per_share})\n⚖️ *Risk-Reward Ratio:* 1:2"
+                        " (High Accuracy Setup)"
                     )
 
-            time.sleep(1.2)  # Prevent Yahoo Rate Limit Block
+            time.sleep(1.2)
 
         except Exception as e:
-            print(f"Error checking {ticker}: {e}")
+            print(f"Error analyzing {ticker}: {e}")
 
 
 # ==========================================
-# 6. SCHEDULER
+# 6. SCHEDULER & RUNNER
 # ==========================================
-send_telegram(
-    "🟢 *Low Risk Budget Stocks Engine Deployed & Active! Scanning...*"
-)
+send_telegram("🚀 *High-Profit VWAP + EMA Precision Strategy Deployed!*")
 
 while True:
     now_ist = datetime.now(IST)
     curr_time = now_ist.strftime("%H:%M")
 
-    print(f"[{curr_time}] Running Deep Budget Scan...")
+    print(f"[{curr_time}] Running Precision Market Scan...")
     scan_budget_stocks()
 
     time.sleep(180)  # Scan every 3 minutes
