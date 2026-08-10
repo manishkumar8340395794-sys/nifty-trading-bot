@@ -39,7 +39,7 @@ def keep_alive():
 threading.Thread(target=keep_alive, daemon=True).start()
 
 # ==========================================
-# 2. TELEGRAM & CACHE SETTINGS
+# 2. TELEGRAM CREDENTIALS
 # ==========================================
 TELEGRAM_BOT_TOKEN = "8993254284:AAGs5LwFD5PD0UMViDpDd8OY35lOSTMwyNE"
 TELEGRAM_CHAT_ID = "5660614483"
@@ -58,11 +58,10 @@ def send_telegram(message):
     try:
         requests.post(url, json=payload)
     except Exception as e:
-        print(f"Telegram error: {e}")
+        print(f"Telegram Error: {e}")
 
 
-def is_duplicate_alert(symbol, alert_type, cooldown_minutes=45):
-    """45 मिनट तक एक ही शेयर का दोबारा मैसेज नहीं भेजेगा"""
+def is_duplicate_alert(symbol, alert_type, cooldown_minutes=30):
     key = f"{symbol}_{alert_type}"
     now = time.time()
     if key in sent_alerts:
@@ -73,19 +72,20 @@ def is_duplicate_alert(symbol, alert_type, cooldown_minutes=45):
 
 
 # ==========================================
-# 3. BUDGET WATCHLIST (UNDER ~₹500-600 STOCKS)
+# 3. BUDGET WATCHLIST (UNDER ~₹500 STOCKS)
 # ==========================================
 BUDGET_WATCHLIST = [
+    "PNB.NS",  # ~₹100
     "GAIL.NS",  # ~₹180 - ₹220
-    "NTPC.NS",  # ~₹300 - ₹380
     "IOC.NS",  # ~₹130 - ₹170
-    "BPCL.NS",  # ~₹280 - ₹350
-    "TATAMOTORS.NS",  # Budget Heavy
     "FEDERALBNK.NS",  # ~₹180 - ₹210
+    "ASHOKLEY.NS",  # ~₹210 - ₹250
+    "BPCL.NS",  # ~₹280 - ₹350
+    "NTPC.NS",  # ~₹300 - ₹380
     "PFC.NS",  # ~₹400 - ₹480
     "REC.NS",  # ~₹450 - ₹520
-    "ASHOKLEY.NS",  # ~₹210 - ₹250
-    "PNB.NS",  # ~₹100 - ₹130
+    "BHEL.NS",  # ~₹250 - ₹300
+    "SBIN.NS",  # Budget Heavy Bank
 ]
 
 
@@ -110,164 +110,106 @@ def calculate_atr(df, window=14):
 
 
 # ==========================================
-# 5. HIGH ACCURACY BUDGET SCANNER
+# 5. SAFE LIVE MARKET SCANNER
 # ==========================================
 def scan_budget_stocks():
-    try:
-        data_5m = yf.download(
-            tickers=BUDGET_WATCHLIST,
-            period="5d",
-            interval="5m",
-            group_by="ticker",
-            progress=False,
-            threads=True,
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            " (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
-        data_1h = yf.download(
-            tickers=BUDGET_WATCHLIST,
-            period="15d",
-            interval="60m",
-            group_by="ticker",
-            progress=False,
-            threads=True,
-        )
-    except Exception as e:
-        print(f"Data Fetch Error: {e}")
-        return
+    })
 
     for ticker in BUDGET_WATCHLIST:
         try:
-            df_5m = (
-                data_5m[ticker].dropna()
-                if ticker in data_5m
-                else pd.DataFrame()
-            )
-            df_1h = (
-                data_1h[ticker].dropna()
-                if ticker in data_1h
-                else pd.DataFrame()
-            )
+            t = yf.Ticker(ticker, session=session)
+            df_5m = t.history(period="3d", interval="5m")
 
-            if len(df_5m) < 30 or len(df_1h) < 40:
+            if df_5m.empty or len(df_5m) < 25:
                 continue
 
             name = ticker.replace(".NS", "")
 
-            # 1H Trend Confirmation (Filter 1)
-            df_1h["EMA_50"] = df_1h["Close"].ewm(span=50, adjust=False).mean()
-            h1_trend = (
-                "UPTREND"
-                if df_1h["Close"].iloc[-1] > df_1h["EMA_50"].iloc[-1]
-                else "DOWNTREND"
-            )
-
-            # 5M Indicators (Filter 2, 3 & 4)
+            # Technical Calculation
             df_5m["RSI"] = calculate_rsi(df_5m["Close"])
             df_5m["EMA_9"] = df_5m["Close"].ewm(span=9, adjust=False).mean()
             df_5m["EMA_21"] = df_5m["Close"].ewm(span=21, adjust=False).mean()
             df_5m["ATR"] = calculate_atr(df_5m)
-            df_5m["VOL_SMA"] = df_5m["Volume"].rolling(10).mean()
 
             latest = df_5m.iloc[-1]
             prev = df_5m.iloc[-2]
 
             close = round(float(latest["Close"]), 2)
             rsi = round(float(latest["RSI"]), 2)
+            ema9 = float(latest["EMA_9"])
+            ema21 = float(latest["EMA_21"])
+            prev_ema9 = float(prev["EMA_9"])
+            prev_ema21 = float(prev["EMA_21"])
 
-            # Strict Budget Limit Check (Under ~₹600)
-            if close > 650:
+            # Filter out expensive stocks dynamically
+            if close > 850:
                 continue
 
             atr = (
                 float(latest["ATR"])
                 if not np.isnan(latest["ATR"])
-                else (close * 0.006)
-            )
-            high_vol = (
-                latest["Volume"] > 1.5 * latest["VOL_SMA"]
-                if not np.isnan(latest["VOL_SMA"])
-                else True
+                else (close * 0.005)
             )
 
-            # Tight Stoploss and Safe 1:2 Target Calculation
-            sl_points = round(atr * 1.2, 2)  # Tight SL to minimize loss
-            target_points = round(sl_points * 2.0, 2)  # Minimum 1:2 RR
+            # Tight Stoploss and Safe 1:2 Target
+            sl_points = round(atr * 1.1, 2)
+            target_points = round(sl_points * 2.0, 2)
 
-            # 🎯 SAFE BUY SIGNAL:
-            # 1H Trend UP + 9 EMA Crossover + High Vol + RSI in Sweet Spot (58-68)
-            if (
-                h1_trend == "UPTREND"
-                and prev["EMA_9"] <= prev["EMA_21"]
-                and latest["EMA_9"] > latest["EMA_21"]
-                and 58 <= rsi <= 68
-                and high_vol
-            ):
-
-                if not is_duplicate_alert(name, "BUY", 45):
+            # 🟢 HIGH ACCURACY BUY SIGNAL
+            if prev_ema9 <= prev_ema21 and ema9 > ema21 and 52 <= rsi <= 70:
+                if not is_duplicate_alert(name, "BUY", 30):
                     sl = round(close - sl_points, 2)
                     target = round(close + target_points, 2)
-                    risk_per_share = round(close - sl, 2)
+                    risk = round(close - sl, 2)
 
                     send_telegram(
                         f"🎯 *LOW RISK BUDGET BUY ALERT*\n────────────────────────\n📌"
-                        f" *Stock:* `{name}`\n💰 *Price:* `₹{close}` (Budget"
-                        f" Stock)\n📈 *Signal:* HIGH ACCURACY BUY\n📊 *1H"
-                        f" Trend:* UPTREND\n\n🎯 *Target:* `₹{target}`\n🛑 *Stop"
-                        f" Loss:* `₹{sl}`\n⚠️ *Max Risk/Share:* `₹{risk_per_share}`"
-                        f" (Minimal Loss)\n🔍 *Confluence:* EMA Cross + High"
-                        f" Volume + RSI `{rsi}`"
+                        f" *Stock:* `{name}`\n💰 *Price:* `₹{close}` (Under"
+                        f" Budget)\n📈 *Signal:* BUY (EMA Cross + Safe RSI)\n📊"
+                        f" *RSI:* `{rsi}`\n\n🎯 *Target:* `₹{target}`\n🛑 *Stop"
+                        f" Loss:* `₹{sl}`\n⚠️ *Max Risk/Share:* `₹{risk}`"
+                        " (Minimal Loss)"
                     )
 
-            # 🎯 SAFE SHORT/SELL SIGNAL:
-            elif (
-                h1_trend == "DOWNTREND"
-                and prev["EMA_9"] >= prev["EMA_21"]
-                and latest["EMA_9"] < latest["EMA_21"]
-                and 32 <= rsi <= 42
-                and high_vol
-            ):
-
-                if not is_duplicate_alert(name, "SELL", 45):
+            # 🔴 HIGH ACCURACY SHORT SIGNAL
+            elif prev_ema9 >= prev_ema21 and ema9 < ema21 and 30 <= rsi <= 48:
+                if not is_duplicate_alert(name, "SELL", 30):
                     sl = round(close + sl_points, 2)
                     target = round(close - target_points, 2)
-                    risk_per_share = round(sl - close, 2)
+                    risk = round(sl - close, 2)
 
                     send_telegram(
                         f"🎯 *LOW RISK BUDGET SHORT ALERT*\n────────────────────────\n📌"
-                        f" *Stock:* `{name}`\n💰 *Price:* `₹{close}` (Budget"
-                        f" Stock)\n📉 *Signal:* HIGH ACCURACY SHORT\n📊 *1H"
-                        f" Trend:* DOWNTREND\n\n🎯 *Target:* `₹{target}`\n🛑 *Stop"
-                        f" Loss:* `₹{sl}`\n⚠️ *Max Risk/Share:* `₹{risk_per_share}`"
-                        f" (Minimal Loss)\n🔍 *Confluence:* EMA Cross + High"
-                        f" Volume + RSI `{rsi}`"
+                        f" *Stock:* `{name}`\n💰 *Price:* `₹{close}` (Under"
+                        f" Budget)\n📉 *Signal:* SHORT SELL\n📊 *RSI:* `{rsi}`\n\n🎯"
+                        f" *Target:* `₹{target}`\n🛑 *Stop Loss:* `₹{sl}`\n⚠️"
+                        f" *Max Risk/Share:* `₹{risk}` (Minimal Loss)"
                     )
 
+            time.sleep(1.2)  # Prevent Yahoo Rate Limit Block
+
         except Exception as e:
-            print(f"Error analyzing {ticker}: {e}")
+            print(f"Error checking {ticker}: {e}")
 
 
 # ==========================================
-# 6. SCHEDULER & MARKET RUNNER
+# 6. SCHEDULER
 # ==========================================
 send_telegram(
-    "🟢 *Budget Stocks Strategy Deployed (Under ₹500 - Low Risk Engine Active)*"
+    "🟢 *Low Risk Budget Stocks Engine Deployed & Active! Scanning...*"
 )
 
 while True:
     now_ist = datetime.now(IST)
-    weekday = now_ist.weekday()
     curr_time = now_ist.strftime("%H:%M")
 
-    # Weekend check
-    if weekday in [5, 6]:
-        print(f"[{curr_time}] Weekend - Market Closed.")
-        time.sleep(1800)
-        continue
+    print(f"[{curr_time}] Running Deep Budget Scan...")
+    scan_budget_stocks()
 
-    # Live Market Scanning
-    if "09:15" <= curr_time <= "15:30":
-        print(f"[{curr_time}] Deep Analysis Running for Budget Stocks...")
-        scan_budget_stocks()
-        time.sleep(300)
-    else:
-        print(f"[{curr_time}] Market Closed. Sleeping...")
-        time.sleep(600)
+    time.sleep(180)  # Scan every 3 minutes
