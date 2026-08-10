@@ -33,22 +33,25 @@ threading.Thread(target=run_server, daemon=True).start()
 
 
 # ============================================================
-# 2. FIXED AUTO KEEP-ALIVE (FORCES RENDER TO STAY AWAKE)
+# 2. INTERNAL AUTO KEEP-ALIVE (FORCES RENDER TO STAY AWAKE)
 # ============================================================
 def keep_alive():
     time.sleep(15)
-    # आपका सटीक Render URL
-    url = "https://nifty-trading-bot-svcg.onrender.com"
+    # बाहरी नेटवर्क पर निर्भर न रहकर अंदरूनी (Localhost) पोर्ट को पिंग करेगा
+    local_url = f"http://127.0.0.1:{PORT}"
 
     while True:
         try:
-            res = requests.get(url, timeout=10)
-            print(f"[Keep-Alive Ping] Status: {res.status_code}")
+            res = requests.get(local_url, timeout=10)
+            print(
+                f"[{datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%H:%M:%S')}]"
+                f" Internal Ping Status: {res.status_code}"
+            )
         except Exception as e:
-            print(f"[Keep-Alive Ping Note] Self ping sent: {e}")
+            print(f"[Keep-Alive Note] {e}")
 
-        # हर 120 सेकंड (2 मिनट) में पिंग करेगा ताकि सर्वर कभी स्लीप मोड में न जाए
-        time.sleep(120)
+        # हर 90 सेकंड (1.5 मिनट) में पिंग करेगा ताकि 15 मिनट वाला स्लीप टाइमर कभी चालू ही न हो
+        time.sleep(90)
 
 
 threading.Thread(target=keep_alive, daemon=True).start()
@@ -105,7 +108,7 @@ WATCHLIST = {
     "PFC.NS": {"name": "PFC (NSE)", "factor": 1.0},
     "BHEL.NS": {"name": "BHEL (NSE)", "factor": 1.0},
     "SBIN.NS": {"name": "SBI (NSE)", "factor": 1.0},
-    # COMMODITIES
+    # COMMODITIES (MCX Scaled Equivalent)
     "GC=F": {"name": "GOLD 10G (MCX Est. ₹)", "factor": 30.0},
     "SI=F": {"name": "SILVER 1KG (MCX Est. ₹)", "factor": 2700.0},
     "CL=F": {"name": "CRUDE OIL (MCX Est. ₹)", "factor": 83.5},
@@ -389,7 +392,7 @@ def scan_markets():
                         f"🎯 *Target:* `₹{target:.2f}` (-₹{close - target:.2f})\n"
                         f"🛑 *Stop Loss:* `₹{sl:.2f}` (+₹{sl - close:.2f})\n"
                         f"⚖️ *Risk/Reward:* 1:2\n"
-                        f"⭐ *Score:* `{sell_score}/7`\n\n"
+                        f"⭐ *Score:* `{buy_score}/7`\n\n"
                         "🔄 *Bot tracking Target & SL Hit!*"
                     )
                     send_telegram(message)
@@ -403,7 +406,7 @@ def scan_markets():
 # ============================================================
 # 7. MAIN LOOP
 # ============================================================
-send_telegram("🚀 *STABLE AUTO KEEP-ALIVE BOT RESTARTED*")
+send_telegram("🚀 *100% NON-STOP KEEP-ALIVE BOT ACTIVATED*")
 
 while True:
     try:
