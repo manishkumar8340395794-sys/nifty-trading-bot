@@ -87,25 +87,29 @@ def is_duplicate_alert(symbol, alert_type, cooldown_minutes=45):
 
 
 # ============================================================
-# 4. WATCHLIST (WORKING YAHOO TICKERS)
+# 4. WATCHLIST (NSE STOCKS + FIXED MCX MULTIPLIERS)
 # ============================================================
 WATCHLIST = {
-    # STOCKS (NSE ₹)
-    "PNB.NS": {"name": "PNB (NSE)", "type": "stock"},
-    "GAIL.NS": {"name": "GAIL (NSE)", "type": "stock"},
-    "IOC.NS": {"name": "IOC (NSE)", "type": "stock"},
-    "FEDERALBNK.NS": {"name": "FEDERAL BANK (NSE)", "type": "stock"},
-    "ASHOKLEY.NS": {"name": "ASHOK LEYLAND (NSE)", "type": "stock"},
-    "BPCL.NS": {"name": "BPCL (NSE)", "type": "stock"},
-    "NTPC.NS": {"name": "NTPC (NSE)", "type": "stock"},
-    "PFC.NS": {"name": "PFC (NSE)", "type": "stock"},
-    "BHEL.NS": {"name": "BHEL (NSE)", "type": "stock"},
-    "SBIN.NS": {"name": "SBI (NSE)", "type": "stock"},
-    # COMMODITIES (Yahoo Tickers with INR conversion)
-    "NG=F": {"name": "NATURAL GAS (₹ Equivalent)", "type": "commodity"},
-    "CL=F": {"name": "CRUDE OIL (₹ Equivalent)", "type": "commodity"},
-    "SI=F": {"name": "SILVER (₹ Equivalent)", "type": "commodity"},
-    "GC=F": {"name": "GOLD (₹ Equivalent)", "type": "commodity"},
+    # NSE STOCKS (₹ INR Direct)
+    "PNB.NS": {"name": "PNB (NSE)", "factor": 1.0},
+    "GAIL.NS": {"name": "GAIL (NSE)", "factor": 1.0},
+    "IOC.NS": {"name": "IOC (NSE)", "factor": 1.0},
+    "FEDERALBNK.NS": {"name": "FEDERAL BANK (NSE)", "factor": 1.0},
+    "ASHOKLEY.NS": {"name": "ASHOK LEYLAND (NSE)", "factor": 1.0},
+    "BPCL.NS": {"name": "BPCL (NSE)", "factor": 1.0},
+    "NTPC.NS": {"name": "NTPC (NSE)", "factor": 1.0},
+    "PFC.NS": {"name": "PFC (NSE)", "factor": 1.0},
+    "BHEL.NS": {"name": "BHEL (NSE)", "factor": 1.0},
+    "SBIN.NS": {"name": "SBI (NSE)", "factor": 1.0},
+    # COMMODITIES (Converted to MCX Lot Equivalent)
+    # GC=F (Gold per Oz to 10 Gram INR approx scale factor)
+    "GC=F": {"name": "GOLD 10G (MCX Est. ₹)", "factor": 30.0},
+    # SI=F (Silver per Oz to 1 Kg INR approx scale factor)
+    "SI=F": {"name": "SILVER 1KG (MCX Est. ₹)", "factor": 2700.0},
+    # CL=F (Crude Oil per Barrel to INR)
+    "CL=F": {"name": "CRUDE OIL (MCX Est. ₹)", "factor": 83.5},
+    # NG=F (Natural Gas)
+    "NG=F": {"name": "NATURAL GAS (MCX Est. ₹)", "factor": 83.5},
 }
 
 
@@ -116,7 +120,7 @@ def get_usd_inr_rate():
             return float(usd_data["Close"].iloc[-1])
     except Exception:
         pass
-    return 83.5  # Approximate fallback rate
+    return 83.5
 
 
 # ============================================================
@@ -203,11 +207,10 @@ def scan_markets():
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         )
     })
-    usd_inr = get_usd_inr_rate()
 
     for ticker, info in WATCHLIST.items():
         display_name = info["name"]
-        asset_type = info["type"]
+        factor = info["factor"]
 
         try:
             ticker_obj = yf.Ticker(ticker, session=session)
@@ -216,7 +219,6 @@ def scan_markets():
             )
 
             if df.empty or len(df) < 50:
-                print(f"No data for {ticker}")
                 continue
 
             if isinstance(df.columns, pd.MultiIndex):
@@ -224,13 +226,11 @@ def scan_markets():
 
             df = df.dropna(subset=["Open", "High", "Low", "Close"])
 
-            # Adjust commodity values to INR if needed
-            multiplier = usd_inr if asset_type == "commodity" else 1.0
-
-            df["Open"] = df["Open"] * multiplier
-            df["High"] = df["High"] * multiplier
-            df["Low"] = df["Low"] * multiplier
-            df["Close"] = df["Close"] * multiplier
+            # Scale prices correctly to INR MCX units
+            df["Open"] = df["Open"] * factor
+            df["High"] = df["High"] * factor
+            df["Low"] = df["Low"] * factor
+            df["Close"] = df["Close"] * factor
 
             df["VWAP"] = calculate_vwap(df)
             df["RSI"] = calculate_rsi(df["Close"])
@@ -402,7 +402,7 @@ def scan_markets():
                         f"🎯 *Target:* `₹{target:.2f}` (-₹{close - target:.2f})\n"
                         f"🛑 *Stop Loss:* `₹{sl:.2f}` (+₹{sl - close:.2f})\n"
                         f"⚖️ *Risk/Reward:* 1:2\n"
-                        f"⭐ *Score:* `{sell_score}/7`\n\n"
+                        f"⭐ *Score:* `{buy_score}/7`\n\n"
                         "🔄 *Bot tracking Target & SL Hit!*"
                     )
                     send_telegram(message)
@@ -416,7 +416,7 @@ def scan_markets():
 # ============================================================
 # 7. MAIN LOOP
 # ============================================================
-send_telegram("🚀 *SCANNER FIXED & RUNNING (NO ERRORS)*")
+send_telegram("🚀 *CALCULATIONS UPDATED FOR REAL INDIAN INR PRICES*")
 
 while True:
     try:
