@@ -14,7 +14,6 @@ import yfinance as yf
 # 1. RENDER PORT & HEALTH SERVER
 # ============================================================
 PORT = int(os.environ.get("PORT", 10000))
-APP_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 
 
 def run_server():
@@ -34,17 +33,22 @@ threading.Thread(target=run_server, daemon=True).start()
 
 
 # ============================================================
-# 2. KEEP ALIVE
+# 2. FIXED AUTO KEEP-ALIVE (FORCES RENDER TO STAY AWAKE)
 # ============================================================
 def keep_alive():
+    time.sleep(15)
+    # आपका सटीक Render URL
+    url = "https://nifty-trading-bot-svcg.onrender.com"
+
     while True:
-        time.sleep(600)
-        if APP_URL:
-            try:
-                requests.get(APP_URL, timeout=15)
-                print("[Keep Alive] OK")
-            except Exception as e:
-                print(f"[Keep Alive Error] {e}")
+        try:
+            res = requests.get(url, timeout=10)
+            print(f"[Keep-Alive Ping] Status: {res.status_code}")
+        except Exception as e:
+            print(f"[Keep-Alive Ping Note] Self ping sent: {e}")
+
+        # हर 120 सेकंड (2 मिनट) में पिंग करेगा ताकि सर्वर कभी स्लीप मोड में न जाए
+        time.sleep(120)
 
 
 threading.Thread(target=keep_alive, daemon=True).start()
@@ -87,7 +91,7 @@ def is_duplicate_alert(symbol, alert_type, cooldown_minutes=45):
 
 
 # ============================================================
-# 4. WATCHLIST (NSE STOCKS + FIXED MCX MULTIPLIERS)
+# 4. WATCHLIST (ACCURATE MCX & NSE TICKERS)
 # ============================================================
 WATCHLIST = {
     # NSE STOCKS (₹ INR Direct)
@@ -101,26 +105,12 @@ WATCHLIST = {
     "PFC.NS": {"name": "PFC (NSE)", "factor": 1.0},
     "BHEL.NS": {"name": "BHEL (NSE)", "factor": 1.0},
     "SBIN.NS": {"name": "SBI (NSE)", "factor": 1.0},
-    # COMMODITIES (Converted to MCX Lot Equivalent)
-    # GC=F (Gold per Oz to 10 Gram INR approx scale factor)
+    # COMMODITIES
     "GC=F": {"name": "GOLD 10G (MCX Est. ₹)", "factor": 30.0},
-    # SI=F (Silver per Oz to 1 Kg INR approx scale factor)
     "SI=F": {"name": "SILVER 1KG (MCX Est. ₹)", "factor": 2700.0},
-    # CL=F (Crude Oil per Barrel to INR)
     "CL=F": {"name": "CRUDE OIL (MCX Est. ₹)", "factor": 83.5},
-    # NG=F (Natural Gas)
     "NG=F": {"name": "NATURAL GAS (MCX Est. ₹)", "factor": 83.5},
 }
-
-
-def get_usd_inr_rate():
-    try:
-        usd_data = yf.Ticker("INR=X").history(period="1d")
-        if not usd_data.empty:
-            return float(usd_data["Close"].iloc[-1])
-    except Exception:
-        pass
-    return 83.5
 
 
 # ============================================================
@@ -226,7 +216,6 @@ def scan_markets():
 
             df = df.dropna(subset=["Open", "High", "Low", "Close"])
 
-            # Scale prices correctly to INR MCX units
             df["Open"] = df["Open"] * factor
             df["High"] = df["High"] * factor
             df["Low"] = df["Low"] * factor
@@ -253,7 +242,6 @@ def scan_markets():
             volume = float(latest["Volume"])
             volume_ma = float(latest["Volume_MA"])
 
-            # Check SL / Target for active positions
             if display_name in active_trades:
                 trade = active_trades[display_name]
                 trade_type = trade["type"]
@@ -308,7 +296,6 @@ def scan_markets():
                         del active_trades[display_name]
                         continue
 
-            # Signal evaluation
             bullish_cross = prev_ema9 <= prev_ema21 and ema9 > ema21
             bearish_cross = prev_ema9 >= prev_ema21 and ema9 < ema21
             above_vwap = close > vwap
@@ -402,7 +389,7 @@ def scan_markets():
                         f"🎯 *Target:* `₹{target:.2f}` (-₹{close - target:.2f})\n"
                         f"🛑 *Stop Loss:* `₹{sl:.2f}` (+₹{sl - close:.2f})\n"
                         f"⚖️ *Risk/Reward:* 1:2\n"
-                        f"⭐ *Score:* `{buy_score}/7`\n\n"
+                        f"⭐ *Score:* `{sell_score}/7`\n\n"
                         "🔄 *Bot tracking Target & SL Hit!*"
                     )
                     send_telegram(message)
@@ -416,7 +403,7 @@ def scan_markets():
 # ============================================================
 # 7. MAIN LOOP
 # ============================================================
-send_telegram("🚀 *CALCULATIONS UPDATED FOR REAL INDIAN INR PRICES*")
+send_telegram("🚀 *STABLE AUTO KEEP-ALIVE BOT RESTARTED*")
 
 while True:
     try:
