@@ -1,9 +1,9 @@
-from datetime import datetime
 import http.server
 import os
 import socketserver
 import threading
 import time
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -21,6 +21,7 @@ APP_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 
 def run_server():
     class HealthHandler(http.server.SimpleHTTPRequestHandler):
+
         def log_message(self, format, *args):
             pass
 
@@ -38,6 +39,7 @@ threading.Thread(target=run_server, daemon=True).start()
 # ============================================================
 # 2. KEEP ALIVE
 # ============================================================
+
 
 def keep_alive():
     while True:
@@ -67,13 +69,13 @@ IST = pytz.timezone("Asia/Kolkata")
 # 4. TELEGRAM FUNCTION
 # ============================================================
 
+
 def send_telegram(message):
     if not TELEGRAM_BOT_TOKEN:
-        print("[Telegram] ERROR: Bot token is missing.")
+        print("[Telegram] ERROR: Token missing.")
         return False
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
@@ -88,102 +90,99 @@ def send_telegram(message):
         if result.get("ok"):
             print("[Telegram] Message sent successfully.")
             return True
-
-        print(f"[Telegram] API Error: {result}")
         return False
-
     except Exception as e:
         print(f"[Telegram Error] {e}")
         return False
 
 
 # ============================================================
-# 5. LIVE USD TO INR CONVERTER ENGINE
-# ============================================================
-
-usd_inr_rate = 83.50  # डिफ़ॉल्ट रेट
-
-
-def get_usd_inr_rate():
-    global usd_inr_rate
-    try:
-        ticker = yf.Ticker("USDINR=X")
-        df = ticker.history(period="1d")
-        if not df.empty:
-            usd_inr_rate = float(df["Close"].iloc[-1])
-            print(f"[USD/INR Rate Updated] 1 USD = ₹{usd_inr_rate:.2f}")
-    except Exception as e:
-        print(f"[USD/INR Fetch Error] Using default rate ₹{usd_inr_rate}: {e}")
-    return usd_inr_rate
-
-
-# ============================================================
-# 6. COOLDOWN & ACTIVE TRADES ENGINE
+# 5. COOLDOWN & ACTIVE TRADES ENGINE
 # ============================================================
 
 sent_alerts = {}
 active_trades = {}
 
 
-def should_send_alert(symbol, alert_type, cooldown_minutes=45):
+def is_duplicate_alert(symbol, alert_type, cooldown_minutes=45):
     key = f"{symbol}_{alert_type}"
     now = time.time()
 
     if key in sent_alerts:
-        elapsed_minutes = (now - sent_alerts[key]) / 60
-        if elapsed_minutes < cooldown_minutes:
+        elapsed = (now - sent_alerts[key]) / 60
+        if elapsed < cooldown_minutes:
             print(
-                f"[SKIP] {symbol} ({alert_type}) blocked by cooldown ({int(cooldown_minutes - elapsed_minutes)} min left)"
+                f"[SKIP] {symbol} ({alert_type}) blocked by cooldown ({int(cooldown_minutes - elapsed)} min left)"
             )
-            return False
+            return True
 
     sent_alerts[key] = now
-    return True
+    return False
 
 
 # ============================================================
-# 7. WATCHLIST
+# 6. WATCHLIST (NSE INDICES + STOCKS + COMMODITIES)
 # ============================================================
 
 WATCHLIST = {
-    # Equity & F&O
+    # Indices
     "^NSEI": "NIFTY 50",
     "^NSEBANK": "BANK NIFTY",
+    "^BSESN": "SENSEX",
+    "^CNXIT": "NIFTY IT",
+    # Top NSE Stocks
     "SBIN.NS": "SBI",
     "PNB.NS": "PNB",
+    "HDFCBANK.NS": "HDFC BANK",
+    "ICICIBANK.NS": "ICICI BANK",
     "GAIL.NS": "GAIL",
     "IOC.NS": "IOC",
-    "FEDERALBNK.NS": "FEDERAL BANK",
-    "ASHOKLEY.NS": "ASHOK LEYLAND",
     "BPCL.NS": "BPCL",
     "NTPC.NS": "NTPC",
     "PFC.NS": "PFC",
     "BHEL.NS": "BHEL",
+    "ASHOKLEY.NS": "ASHOK LEYLAND",
     "TATAMOTORS.NS": "TATA MOTORS",
     "RELIANCE.NS": "RELIANCE",
-    # Commodities (Indian MCX Approx Rates)
-    "GC=F": "GOLD (MCX 10g Approx)",
-    "SI=F": "SILVER (MCX 1kg Approx)",
-    "CL=F": "CRUDE OIL (MCX ₹/Barrel)",
-    "NG=F": "NATURAL GAS (MCX ₹/mmbtu)",
+    "TCS.NS": "TCS",
+    "INFY.NS": "INFOSYS",
+    # Commodities
+    "GC=F": "GOLD",
+    "SI=F": "SILVER",
+    "CL=F": "CRUDE OIL",
+    "NG=F": "NATURAL GAS",
 }
+
+
+# ============================================================
+# 7. MARKET HOURS CHECK
+# ============================================================
+
+
+def is_market_open():
+    now = datetime.now(IST)
+    if now.weekday() >= 5:  # Saturday/Sunday
+        return False
+    current_time = now.time()
+    # Broad scanning window for Stocks & Commodities (09:00 AM to 11:30 PM IST)
+    return current_time.hour >= 9 and current_time.hour <= 23
 
 
 # ============================================================
 # 8. TECHNICAL INDICATORS
 # ============================================================
 
+
 def calculate_vwap(df):
     data = df.copy()
-    volume = data["Volume"].fillna(1)
+    volume = data["Volume"].fillna(0)
     typical_price = (data["High"] + data["Low"] + data["Close"]) / 3
 
     if data.index.tz is None:
         data.index = data.index.tz_localize("UTC")
-
     data.index = data.index.tz_convert(IST)
-    session_date = data.index.date
 
+    session_date = data.index.date
     cumulative_pv = (typical_price * volume).groupby(session_date).cumsum()
     cumulative_volume = volume.groupby(session_date).cumsum()
 
@@ -196,12 +195,12 @@ def calculate_rsi(series, window=14):
     gain = delta.where(delta > 0, 0)
     loss = -delta.where(delta < 0, 0)
 
-    avg_gain = (
-        gain.ewm(alpha=1 / window, adjust=False, min_periods=window).mean()
-    )
-    avg_loss = (
-        loss.ewm(alpha=1 / window, adjust=False, min_periods=window).mean()
-    )
+    avg_gain = gain.ewm(
+        alpha=1 / window, adjust=False, min_periods=window
+    ).mean()
+    avg_loss = loss.ewm(
+        alpha=1 / window, adjust=False, min_periods=window
+    ).mean()
 
     rs = avg_gain / avg_loss.replace(0, np.nan)
     return 100 - (100 / (1 + rs))
@@ -225,7 +224,7 @@ def bullish_candle(row):
     if candle_range <= 0:
         return False
     body = abs(row["Close"] - row["Open"])
-    return row["Close"] > row["Open"] and (body / candle_range) >= 0.40
+    return row["Close"] > row["Open"] and (body / candle_range) >= 0.50
 
 
 def bearish_candle(row):
@@ -233,15 +232,15 @@ def bearish_candle(row):
     if candle_range <= 0:
         return False
     body = abs(row["Close"] - row["Open"])
-    return row["Close"] < row["Open"] and (body / candle_range) >= 0.40
+    return row["Close"] < row["Open"] and (body / candle_range) >= 0.50
 
 
 # ============================================================
-# 9. MARKET SCANNER
+# 9. MARKET SCANNER & TRADE MONITOR
 # ============================================================
+
 
 def scan_markets():
-    usdinr = get_usd_inr_rate()
     session = requests.Session()
     session.headers.update({
         "User-Agent": (
@@ -252,6 +251,7 @@ def scan_markets():
 
     for ticker, display_name in WATCHLIST.items():
         try:
+            print(f"Scanning: {display_name}")
             ticker_obj = yf.Ticker(ticker, session=session)
             df = ticker_obj.history(
                 period="5d", interval="5m", auto_adjust=False, prepost=False
@@ -264,29 +264,13 @@ def scan_markets():
                 df.columns = df.columns.get_level_values(0)
 
             df = df.dropna(subset=["Open", "High", "Low", "Close"])
-            if len(df) < 20:
+            if len(df) < 50:
                 continue
-
-            # ----------------------------------------------------
-            # MCX PRICE CONVERSION LOGIC
-            # ----------------------------------------------------
-            if ticker == "CL=F":  # CRUDE OIL (1 Barrel in INR)
-                df[["Open", "High", "Low", "Close"]] *= usdinr
-            elif ticker == "NG=F":  # NATURAL GAS
-                df[["Open", "High", "Low", "Close"]] *= usdinr
-            elif ticker == "GC=F":  # GOLD (10 Grams Indian MCX Rate Standard)
-                # 1 Oz = 31.1035 Grams. Indian Duty/Taxes ~15% added
-                df[["Open", "High", "Low", "Close"]] *= (
-                    usdinr / 31.1035
-                ) * 10 * 1.15
-            elif ticker == "SI=F":  # SILVER (1 KG Indian MCX Rate Standard)
-                df[["Open", "High", "Low", "Close"]] *= (
-                    usdinr / 31.1035
-                ) * 1000 * 1.15
 
             if "Volume" not in df.columns or df["Volume"].sum() == 0:
                 df["Volume"] = 1000
 
+            # Calculation
             df["VWAP"] = calculate_vwap(df)
             df["RSI"] = calculate_rsi(df["Close"])
             df["EMA_9"] = df["Close"].ewm(span=9, adjust=False).mean()
@@ -311,7 +295,7 @@ def scan_markets():
             volume_ma = float(latest["Volume_MA"])
 
             # ----------------------------------------------------
-            # A. ACTIVE TRADES MONITORING
+            # A. TARGET / STOP LOSS TRACKER FOR ACTIVE TRADES
             # ----------------------------------------------------
             if display_name in active_trades:
                 trade = active_trades[display_name]
@@ -323,9 +307,9 @@ def scan_markets():
                             "🎯 *TARGET ACHIEVED! (PROFIT HIT)* 🎉\n"
                             "━━━━━━━━━━━━━━━━━━━━\n"
                             f"📌 *Asset:* `{display_name}`\n"
-                            f"🚀 *Entry:* `₹{trade['entry']:.2f}`\n"
-                            f"🎯 *Target Hit:* `₹{trade['target']:.2f}`\n"
-                            f"💰 *Profit:* `+₹{trade['target'] - trade['entry']:.2f}`"
+                            f"🚀 *Entry:* `{trade['entry']:.2f}`\n"
+                            f"🎯 *Target Hit:* `{trade['target']:.2f}`\n"
+                            f"💰 *Profit:* `+{trade['target'] - trade['entry']:.2f}`"
                         )
                         send_telegram(msg)
                         del active_trades[display_name]
@@ -335,9 +319,9 @@ def scan_markets():
                             "🛑 *STOP LOSS HIT! (TRADE CLOSED)* ⚠️\n"
                             "━━━━━━━━━━━━━━━━━━━━\n"
                             f"📌 *Asset:* `{display_name}`\n"
-                            f"🚀 *Entry:* `₹{trade['entry']:.2f}`\n"
-                            f"🛑 *SL Hit:* `₹{trade['sl']:.2f}`\n"
-                            f"📉 *Loss:* `-₹{trade['entry'] - trade['sl']:.2f}`"
+                            f"🚀 *Entry:* `{trade['entry']:.2f}`\n"
+                            f"🛑 *SL Hit:* `{trade['sl']:.2f}`\n"
+                            f"📉 *Loss:* `-{trade['entry'] - trade['sl']:.2f}`"
                         )
                         send_telegram(msg)
                         del active_trades[display_name]
@@ -349,9 +333,9 @@ def scan_markets():
                             "🎯 *TARGET ACHIEVED! (PROFIT HIT)* 🎉\n"
                             "━━━━━━━━━━━━━━━━━━━━\n"
                             f"📌 *Asset:* `{display_name}`\n"
-                            f"📉 *Entry:* `₹{trade['entry']:.2f}`\n"
-                            f"🎯 *Target Hit:* `₹{trade['target']:.2f}`\n"
-                            f"💰 *Profit:* `+₹{trade['entry'] - trade['target']:.2f}`"
+                            f"📉 *Entry:* `{trade['entry']:.2f}`\n"
+                            f"🎯 *Target Hit:* `{trade['target']:.2f}`\n"
+                            f"💰 *Profit:* `+{trade['entry'] - trade['target']:.2f}`"
                         )
                         send_telegram(msg)
                         del active_trades[display_name]
@@ -361,33 +345,35 @@ def scan_markets():
                             "🛑 *STOP LOSS HIT! (TRADE CLOSED)* ⚠️\n"
                             "━━━━━━━━━━━━━━━━━━━━\n"
                             f"📌 *Asset:* `{display_name}`\n"
-                            f"📉 *Entry:* `₹{trade['entry']:.2f}`\n"
-                            f"🛑 *SL Hit:* `₹{trade['sl']:.2f}`\n"
-                            f"📉 *Loss:* `-₹{trade['sl'] - trade['entry']:.2f}`"
+                            f"📉 *Entry:* `{trade['entry']:.2f}`\n"
+                            f"🛑 *SL Hit:* `{trade['sl']:.2f}`\n"
+                            f"📉 *Loss:* `-{trade['sl'] - trade['entry']:.2f}`"
                         )
                         send_telegram(msg)
                         del active_trades[display_name]
 
             # ----------------------------------------------------
-            # B. NEW SIGNAL SCANNER
+            # B. STRICT STRATEGY & SCORE SYSTEM
             # ----------------------------------------------------
             bullish_cross = prev_ema9 <= prev_ema21 and ema9 > ema21
             bearish_cross = prev_ema9 >= prev_ema21 and ema9 < ema21
-            above_vwap = close >= vwap
-            below_vwap = close <= vwap
-            bullish_rsi = 48 <= rsi <= 72
-            bearish_rsi = 28 <= rsi <= 52
+            above_vwap = close > vwap
+            below_vwap = close < vwap
 
-            is_commodity = "=F" in ticker
-            volume_confirmed = (
-                True if is_commodity else (volume >= volume_ma * 1.05)
-            )
+            # Strict RSI Rules
+            bullish_rsi = 54 <= rsi <= 68
+            bearish_rsi = 32 <= rsi <= 46
 
+            # Volume & Candle
+            volume_confirmed = volume >= volume_ma * 1.20
             bullish_confirmed = bullish_candle(latest)
             bearish_confirmed = bearish_candle(latest)
-            bullish_trend = ema9 > ema21
-            bearish_trend = ema9 < ema21
 
+            # Trend Confirmation
+            bullish_trend = ema9 > ema21 and close > ema9
+            bearish_trend = ema9 < ema21 and close < ema9
+
+            # Score Calculation
             buy_score = sum([
                 above_vwap,
                 bullish_cross * 2,
@@ -405,12 +391,32 @@ def scan_markets():
                 bearish_confirmed,
             ])
 
-            sl_points = max(atr * 1.20, close * 0.003)
+            # ATR Risk Management
+            sl_points = max(atr * 1.20, close * 0.004)
             target_points = sl_points * 2
 
-            # NEW BUY SIGNAL
-            if buy_score >= 4 and above_vwap:
-                if should_send_alert(display_name, "BUY", cooldown_minutes=45):
+            # ----------------------------------------------------
+            # C. SIGNAL GENERATION (STRICT 6/7 FILTER)
+            # ----------------------------------------------------
+            strong_buy = (
+                buy_score >= 6
+                and above_vwap
+                and bullish_trend
+                and bullish_rsi
+                and volume_confirmed
+                and bullish_confirmed
+            )
+            strong_sell = (
+                sell_score >= 6
+                and below_vwap
+                and bearish_trend
+                and bearish_rsi
+                and volume_confirmed
+                and bearish_confirmed
+            )
+
+            if strong_buy:
+                if not is_duplicate_alert(display_name, "BUY"):
                     sl = close - sl_points
                     target = close + target_points
                     risk = close - sl
@@ -424,22 +430,26 @@ def scan_markets():
                     }
 
                     message = (
-                        "🟢 *NEW BUY ENTRY*\n"
+                        "🟢 *STRONG BUY ALERT*\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
                         f"📌 *Asset:* `{display_name}`\n"
-                        f"💰 *Price:* `₹{close:.2f}`\n"
-                        f"📊 *VWAP:* `₹{vwap:.2f}` (Above ✅)\n"
-                        f"📈 *RSI:* `{rsi:.2f}`\n\n"
-                        f"🎯 *Entry:* `₹{close:.2f}`\n"
-                        f"🎯 *Target:* `₹{target:.2f}` (+₹{reward:.2f})\n"
-                        f"🛑 *Stop Loss:* `₹{sl:.2f}` (-₹{risk:.2f})\n"
-                        f"⭐ *Score:* `{buy_score}/7`"
+                        f"💰 *Price:* `{close:.2f}`\n"
+                        f"📊 *VWAP:* `{vwap:.2f}` (Above ✅)\n"
+                        f"📈 *RSI:* `{rsi:.2f}`\n"
+                        f"📈 *EMA 9:* `{ema9:.2f}` | *EMA 21:* `{ema21:.2f}`\n"
+                        f"🔊 *Volume:* Confirmed ✅\n"
+                        f"🕯️ *Candle:* Bullish ✅\n\n"
+                        f"🎯 *Entry:* `{close:.2f}`\n"
+                        f"🎯 *Target:* `{target:.2f}` (+{reward:.2f})\n"
+                        f"🛑 *Stop Loss:* `{sl:.2f}` (-{risk:.2f})\n"
+                        f"⚖️ *Risk/Reward:* 1:2\n"
+                        f"⭐ *Score:* `{buy_score}/7`\n\n"
+                        "⚠️ *Verify market conditions before trading.*"
                     )
                     send_telegram(message)
 
-            # NEW SELL SIGNAL
-            elif sell_score >= 4 and below_vwap:
-                if should_send_alert(display_name, "SELL", cooldown_minutes=45):
+            elif strong_sell:
+                if not is_duplicate_alert(display_name, "SELL"):
                     sl = close + sl_points
                     target = close - target_points
                     risk = sl - close
@@ -453,44 +463,67 @@ def scan_markets():
                     }
 
                     message = (
-                        "🔴 *NEW SELL ENTRY*\n"
+                        "🔴 *STRONG SELL ALERT*\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
                         f"📌 *Asset:* `{display_name}`\n"
-                        f"💰 *Price:* `₹{close:.2f}`\n"
-                        f"📊 *VWAP:* `₹{vwap:.2f}` (Below 🔻)\n"
-                        f"📉 *RSI:* `{rsi:.2f}`\n\n"
-                        f"🎯 *Entry:* `₹{close:.2f}`\n"
-                        f"🎯 *Target:* `₹{target:.2f}` (-₹{reward:.2f})\n"
-                        f"🛑 *Stop Loss:* `₹{sl:.2f}` (+₹{risk:.2f})\n"
-                        f"⭐ *Score:* `{sell_score}/7`"
+                        f"💰 *Price:* `{close:.2f}`\n"
+                        f"📊 *VWAP:* `{vwap:.2f}` (Below 🔻)\n"
+                        f"📉 *RSI:* `{rsi:.2f}`\n"
+                        f"📈 *EMA 9:* `{ema9:.2f}` | *EMA 21:* `{ema21:.2f}`\n"
+                        f"🔊 *Volume:* Confirmed ✅\n"
+                        f"🕯️ *Candle:* Bearish ✅\n\n"
+                        f"🎯 *Entry:* `{close:.2f}`\n"
+                        f"🎯 *Target:* `{target:.2f}` (-{reward:.2f})\n"
+                        f"🛑 *Stop Loss:* `{sl:.2f}` (+{risk:.2f})\n"
+                        f"⚖️ *Risk/Reward:* 1:2\n"
+                        f"⭐ *Score:* `{sell_score}/7`\n\n"
+                        "⚠️ *Verify market conditions before trading.*"
                     )
                     send_telegram(message)
+
+            time.sleep(1)
 
         except Exception as e:
             print(f"[Error scanning {display_name}] {e}")
 
 
 # ============================================================
-# 10. MAIN LOOP EXECUTION
+# 10. MAIN EXECUTION LOOP
 # ============================================================
 
 if __name__ == "__main__":
     print("Initializing Application...")
 
-    startup_msg = (
-        "🚀 *MANI TRADING BOT (MCX RATE FORMAT ACTIVATED)*\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "🇮🇳 *MCX Gold Standard:* ACTIVE (~₹75,000/10g)\n"
-        "🎯 *Position Tracker:* ENABLED\n"
-        "📡 *Status:* Scanning Active"
+    send_telegram(
+        "🚀 *HYBRID ULTRA ACCURATE SCANNER ACTIVATED!*\n\n"
+        "📊 Timeframe: 5 Minutes\n"
+        "📈 VWAP + EMA 9/21 + RSI + ATR\n"
+        "🔊 Volume Filter: 1.2x Confirmed\n"
+        "🕯️ Candle Ratio: >= 50% Body\n"
+        "🎯 Target Tracker: Auto Target & SL Hit Alerts\n"
+        "⭐ Strict Score Filter: 6/7 Required\n\n"
+        "Scanner is now live and scanning."
     )
-
-    send_telegram(startup_msg)
 
     while True:
         try:
-            scan_markets()
+            now_ist = datetime.now(IST)
+            current_time = now_ist.strftime("%H:%M:%S")
+
+            print("\n==============================================")
+            print(f"[{current_time} IST] Scanning Markets...")
+
+            if is_market_open():
+                scan_markets()
+            else:
+                print("Outside configured market window.")
+
+            print("Next scan after 180 seconds...")
+            time.sleep(180)
+
+        except KeyboardInterrupt:
+            print("Scanner stopped.")
+            break
         except Exception as e:
             print(f"[MAIN LOOP ERROR] {e}")
-
-        time.sleep(180)  # Scan every 3 minutes
+            time.sleep(30)
