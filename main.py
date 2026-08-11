@@ -49,7 +49,7 @@ def keep_alive():
 threading.Thread(target=keep_alive, daemon=True).start()
 
 # ============================================================
-# 3. TELEGRAM SETTINGS (स्क्रीनशॉट से पूरा टोकन अपडेट कर दिया गया है)
+# 3. TELEGRAM SETTINGS (आपकी सही आईडी और पूरा टोकन)
 # ============================================================
 
 TELEGRAM_BOT_TOKEN = "8993254284:AAGs5LwFD5PD0UMViDpDd8OY35IOSTMwyNE"
