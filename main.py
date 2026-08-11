@@ -33,7 +33,7 @@ def run_server():
     except Exception as e:
         print(f"[Health Server Error]: {e}")
 
-# Server in background thread
+# Server in background
 server_thread = threading.Thread(target=run_server, daemon=True)
 server_thread.start()
 
@@ -57,8 +57,8 @@ ping_thread.start()
 # =========================================================
 # 3. TELEGRAM SETTINGS
 # =========================================================
-TELEGRAM_BOT_TOKEN = "8993254284:AAGs..."  # आपका बोट टोकन
-TELEGRAM_CHAT_ID = "5660614483"             # आपकी टेलीग्राम चैट आईडी
+TELEGRAM_BOT_TOKEN = "8993254284:AAGs..."  # अपना पूरा सही टोकन यहाँ डालें
+TELEGRAM_CHAT_ID = "5660614483"             # आपकी चैट आईडी
 IST = pytz.timezone("Asia/Kolkata")
 
 def send_telegram(message):
@@ -77,7 +77,7 @@ def send_telegram(message):
         return False
 
 # =========================================================
-# 4. WATCHLIST & INDICATORS
+# 4. WATCHLIST & SCANNER
 # =========================================================
 WATCHLIST = {
     "SBIN.NS": {"name": "SBI (NSE)"},
@@ -88,28 +88,13 @@ WATCHLIST = {
     "ASHOKLEY.NS": {"name": "ASHOK LEYLAND"}
 }
 
-def calculate_rsi(series, window=14):
-    delta = series.diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.ewm(alpha=1/window, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1/window, adjust=False).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    return 100 - (100 / (1 + rs))
-
 def scan_markets():
     for ticker, info in WATCHLIST.items():
         try:
             df = yf.download(ticker, period="2d", interval="5m", progress=False)
-            if not df.empty and len(df) > 15:
-                if isinstance(df.columns, pd.MultiIndex):
-                    df.columns = df.columns.get_level_values(0)
-                
-                df['RSI'] = calculate_rsi(df['Close'])
+            if not df.empty:
                 last_price = round(df['Close'].iloc[-1], 2)
-                last_rsi = round(df['RSI'].iloc[-1], 2)
-                
-                print(f"[{info['name']}] Price: ₹{last_price} | RSI: {last_rsi}")
+                print(f"Checking {info['name']}: ₹{last_price}")
         except Exception as e:
             print(f"Error scanning {ticker}: {e}")
 
