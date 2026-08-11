@@ -11,7 +11,6 @@ import pytz
 import requests
 import yfinance as yf
 
-
 # ============================================================
 # 1. RENDER PORT & HEALTH SERVER
 # ============================================================
@@ -102,7 +101,8 @@ def send_telegram(message):
 # 5. LIVE USD TO INR CONVERTER ENGINE
 # ============================================================
 
-usd_inr_rate = 83.50  # डिफ़ॉल्ट बैकअप रेट
+usd_inr_rate = 83.50  # डिफ़ॉल्ट रेट
+
 
 def get_usd_inr_rate():
     global usd_inr_rate
@@ -124,6 +124,7 @@ def get_usd_inr_rate():
 sent_alerts = {}
 active_trades = {}
 
+
 def should_send_alert(symbol, alert_type, cooldown_minutes=45):
     key = f"{symbol}_{alert_type}"
     now = time.time()
@@ -131,7 +132,9 @@ def should_send_alert(symbol, alert_type, cooldown_minutes=45):
     if key in sent_alerts:
         elapsed_minutes = (now - sent_alerts[key]) / 60
         if elapsed_minutes < cooldown_minutes:
-            print(f"[SKIP] {symbol} ({alert_type}) blocked by cooldown ({int(cooldown_minutes - elapsed_minutes)} min left)")
+            print(
+                f"[SKIP] {symbol} ({alert_type}) blocked by cooldown ({int(cooldown_minutes - elapsed_minutes)} min left)"
+            )
             return False
 
     sent_alerts[key] = now
@@ -158,10 +161,9 @@ WATCHLIST = {
     "BHEL.NS": "BHEL",
     "TATAMOTORS.NS": "TATA MOTORS",
     "RELIANCE.NS": "RELIANCE",
-
-    # Commodities (MCX Indian Rupee Standard)
-    "GC=F": "GOLD (MCX Approx)",
-    "SI=F": "SILVER (MCX Approx)",
+    # Commodities (Indian MCX Approx Rates)
+    "GC=F": "GOLD (MCX 10g Approx)",
+    "SI=F": "SILVER (MCX 1kg Approx)",
     "CL=F": "CRUDE OIL (MCX ₹/Barrel)",
     "NG=F": "NATURAL GAS (MCX ₹/mmbtu)",
 }
@@ -194,8 +196,12 @@ def calculate_rsi(series, window=14):
     gain = delta.where(delta > 0, 0)
     loss = -delta.where(delta < 0, 0)
 
-    avg_gain = gain.ewm(alpha=1 / window, adjust=False, min_periods=window).mean()
-    avg_loss = loss.ewm(alpha=1 / window, adjust=False, min_periods=window).mean()
+    avg_gain = (
+        gain.ewm(alpha=1 / window, adjust=False, min_periods=window).mean()
+    )
+    avg_loss = (
+        loss.ewm(alpha=1 / window, adjust=False, min_periods=window).mean()
+    )
 
     rs = avg_gain / avg_loss.replace(0, np.nan)
     return 100 - (100 / (1 + rs))
@@ -209,7 +215,9 @@ def calculate_atr(df, window=14):
     ranges = pd.concat([high_low, high_close, low_close], axis=1)
     true_range = ranges.max(axis=1)
 
-    return true_range.ewm(alpha=1 / window, adjust=False, min_periods=window).mean()
+    return true_range.ewm(
+        alpha=1 / window, adjust=False, min_periods=window
+    ).mean()
 
 
 def bullish_candle(row):
@@ -229,20 +237,25 @@ def bearish_candle(row):
 
 
 # ============================================================
-# 9. MARKET SCANNER WITH INR CONVERSION
+# 9. MARKET SCANNER
 # ============================================================
 
 def scan_markets():
-    usdinr = get_usd_inr_rate()  # डोलर का ताज़ा इंडियन रुपया रेट
+    usdinr = get_usd_inr_rate()
     session = requests.Session()
     session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36"
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            " (KHTML, like Gecko) Chrome/131.0 Safari/537.36"
+        )
     })
 
     for ticker, display_name in WATCHLIST.items():
         try:
             ticker_obj = yf.Ticker(ticker, session=session)
-            df = ticker_obj.history(period="5d", interval="5m", auto_adjust=False, prepost=False)
+            df = ticker_obj.history(
+                period="5d", interval="5m", auto_adjust=False, prepost=False
+            )
 
             if df.empty:
                 continue
@@ -255,16 +268,21 @@ def scan_markets():
                 continue
 
             # ----------------------------------------------------
-            # COMMODITY PRICE TO INDIAN RUPEES (MCX ALIGNMENT)
+            # MCX PRICE CONVERSION LOGIC
             # ----------------------------------------------------
-            if ticker == "CL=F":       # CRUDE OIL (1 Barrel in INR)
+            if ticker == "CL=F":  # CRUDE OIL (1 Barrel in INR)
                 df[["Open", "High", "Low", "Close"]] *= usdinr
-            elif ticker == "NG=F":     # NATURAL GAS
+            elif ticker == "NG=F":  # NATURAL GAS
                 df[["Open", "High", "Low", "Close"]] *= usdinr
-            elif ticker == "GC=F":     # GOLD (Per 10 Gram INR approx)
-                df[["Open", "High", "Low", "Close"]] *= (usdinr / 31.1035) * 10
-            elif ticker == "SI=F":     # SILVER (Per 1 KG INR approx)
-                df[["Open", "High", "Low", "Close"]] *= (usdinr / 31.1035) * 1000
+            elif ticker == "GC=F":  # GOLD (10 Grams Indian MCX Rate Standard)
+                # 1 Oz = 31.1035 Grams. Indian Duty/Taxes ~15% added
+                df[["Open", "High", "Low", "Close"]] *= (
+                    usdinr / 31.1035
+                ) * 10 * 1.15
+            elif ticker == "SI=F":  # SILVER (1 KG Indian MCX Rate Standard)
+                df[["Open", "High", "Low", "Close"]] *= (
+                    usdinr / 31.1035
+                ) * 1000 * 1.15
 
             if "Volume" not in df.columns or df["Volume"].sum() == 0:
                 df["Volume"] = 1000
@@ -361,15 +379,31 @@ def scan_markets():
             bearish_rsi = 28 <= rsi <= 52
 
             is_commodity = "=F" in ticker
-            volume_confirmed = True if is_commodity else (volume >= volume_ma * 1.05)
+            volume_confirmed = (
+                True if is_commodity else (volume >= volume_ma * 1.05)
+            )
 
             bullish_confirmed = bullish_candle(latest)
             bearish_confirmed = bearish_candle(latest)
             bullish_trend = ema9 > ema21
             bearish_trend = ema9 < ema21
 
-            buy_score = sum([above_vwap, bullish_cross * 2, bullish_trend, bullish_rsi, volume_confirmed, bullish_confirmed])
-            sell_score = sum([below_vwap, bearish_cross * 2, bearish_trend, bearish_rsi, volume_confirmed, bearish_confirmed])
+            buy_score = sum([
+                above_vwap,
+                bullish_cross * 2,
+                bullish_trend,
+                bullish_rsi,
+                volume_confirmed,
+                bullish_confirmed,
+            ])
+            sell_score = sum([
+                below_vwap,
+                bearish_cross * 2,
+                bearish_trend,
+                bearish_rsi,
+                volume_confirmed,
+                bearish_confirmed,
+            ])
 
             sl_points = max(atr * 1.20, close * 0.003)
             target_points = sl_points * 2
@@ -386,7 +420,7 @@ def scan_markets():
                         "type": "BUY",
                         "entry": close,
                         "target": target,
-                        "sl": sl
+                        "sl": sl,
                     }
 
                     message = (
@@ -415,7 +449,7 @@ def scan_markets():
                         "type": "SELL",
                         "entry": close,
                         "target": target,
-                        "sl": sl
+                        "sl": sl,
                     }
 
                     message = (
@@ -444,9 +478,9 @@ if __name__ == "__main__":
     print("Initializing Application...")
 
     startup_msg = (
-        "🚀 *MANI TRADING BOT (INDIAN MARKET RS FORMAT ACTIVATED)*\n"
+        "🚀 *MANI TRADING BOT (MCX RATE FORMAT ACTIVATED)*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "🇮🇳 *INR Conversion:* ACTIVE (Crude/Gold/Silver in ₹)\n"
+        "🇮🇳 *MCX Gold Standard:* ACTIVE (~₹75,000/10g)\n"
         "🎯 *Position Tracker:* ENABLED\n"
         "📡 *Status:* Scanning Active"
     )
