@@ -49,10 +49,10 @@ def keep_alive():
 threading.Thread(target=keep_alive, daemon=True).start()
 
 # ============================================================
-# 3. TELEGRAM SETTINGS
+# 3. TELEGRAM SETTINGS (स्क्रीनशॉट से पूरा टोकन अपडेट कर दिया गया है)
 # ============================================================
 
-TELEGRAM_BOT_TOKEN = "8993254284:AAGs..."
+TELEGRAM_BOT_TOKEN = "8993254284:AAGs5LwFD5PD0UMViDpDd8OY35IOSTMwyNE"
 TELEGRAM_CHAT_ID = "5660614483"
 
 IST = pytz.timezone("Asia/Kolkata")
@@ -73,7 +73,7 @@ def send_telegram(message):
         response.raise_for_status()
         result = response.json()
         if result.get("ok"):
-            print("[Telegram] Message sent successfully.")
+            print("[Telegram] Message sent successfully!")
             return True
         print(f"[Telegram] API Error: {result}")
         return False
@@ -87,7 +87,7 @@ def send_telegram(message):
 
 sent_alerts = {}
 
-def is_duplicate_alert(symbol, alert_type, cooldown_minutes=45):
+def is_duplicate_alert(symbol, alert_type, cooldown_minutes=30):
     key = f"{symbol}_{alert_type}"
     now = time.time()
     if key in sent_alerts:
@@ -119,7 +119,7 @@ WATCHLIST = {
 }
 
 # ============================================================
-# 7. SESSION VWAP
+# 7. INDICATORS
 # ============================================================
 
 def calculate_vwap(df):
@@ -133,10 +133,6 @@ def calculate_vwap(df):
     cumulative_pv = (typical_price * volume).groupby(session_date).cumsum()
     cumulative_volume = volume.groupby(session_date).cumsum()
     return cumulative_pv / (cumulative_volume + 1e-9)
-
-# ============================================================
-# 8. RSI & ATR
-# ============================================================
 
 def calculate_rsi(series, window=14):
     delta = series.diff()
@@ -160,17 +156,17 @@ def bullish_candle(row):
     if candle_range <= 0:
         return False
     body = abs(row["Close"] - row["Open"])
-    return row["Close"] > row["Open"] and (body / candle_range) >= 0.50
+    return row["Close"] > row["Open"] and (body / candle_range) >= 0.40
 
 def bearish_candle(row):
     candle_range = row["High"] - row["Low"]
     if candle_range <= 0:
         return False
     body = abs(row["Close"] - row["Open"])
-    return row["Close"] < row["Open"] and (body / candle_range) >= 0.50
+    return row["Close"] < row["Open"] and (body / candle_range) >= 0.40
 
 # ============================================================
-# 9. SCAN MARKETS
+# 8. SCAN MARKETS
 # ============================================================
 
 def scan_markets():
@@ -181,20 +177,18 @@ def scan_markets():
 
     for ticker, display_name in WATCHLIST.items():
         try:
-            print(f"\nScanning: {display_name}")
+            print(f"Scanning: {display_name}...")
             ticker_obj = yf.Ticker(ticker, session=session)
             df = ticker_obj.history(period="5d", interval="5m", auto_adjust=False, prepost=False)
 
             if df.empty:
-                print(f"{display_name}: No data.")
                 continue
 
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
 
             df = df.dropna(subset=["Open", "High", "Low", "Close"])
-            if len(df) < 50:
-                print(f"{display_name}: Not enough candles.")
+            if len(df) < 30:
                 continue
 
             df["VWAP"] = calculate_vwap(df)
@@ -222,13 +216,13 @@ def scan_markets():
             bearish_cross = prev_ema9 >= prev_ema21 and ema9 < ema21
             above_vwap = close > vwap
             below_vwap = close < vwap
-            bullish_rsi = 54 <= rsi <= 68
-            bearish_rsi = 32 <= rsi <= 46
-            volume_confirmed = volume >= volume_ma * 1.20
+            bullish_rsi = 50 <= rsi <= 70
+            bearish_rsi = 30 <= rsi <= 50
+            volume_confirmed = volume >= volume_ma * 1.10
             bullish_confirmed = bullish_candle(latest)
             bearish_confirmed = bearish_candle(latest)
-            bullish_trend = ema9 > ema21 and close > ema9
-            bearish_trend = ema9 < ema21 and close < ema9
+            bullish_trend = ema9 > ema21
+            bearish_trend = ema9 < ema21
 
             buy_score = sum([above_vwap, bullish_cross*2, bullish_trend, bullish_rsi, volume_confirmed, bullish_confirmed])
             sell_score = sum([below_vwap, bearish_cross*2, bearish_trend, bearish_rsi, volume_confirmed, bearish_confirmed])
@@ -238,26 +232,26 @@ def scan_markets():
             sl_points = max(atr * 1.20, close * 0.004)
             target_points = sl_points * 2
 
-            if buy_score >= 6 and above_vwap and bullish_trend and bullish_rsi and volume_confirmed and bullish_confirmed:
+            if buy_score >= 5 and above_vwap:
                 if not is_duplicate_alert(display_name, "BUY"):
                     sl = close - sl_points
                     target = close + target_points
                     msg = (
-                        "🟢 *STRONG BUY ALERT*\n━━━━━━━━━━━━━━━━━━━━\n"
+                        "🟢 *BUY ALERT*\n━━━━━━━━━━━━━━━━━━━━\n"
                         f"📌 *Asset:* `{display_name}`\n💰 *Price:* `₹{close:.2f}`\n"
-                        f"🎯 *Entry:* `₹{close:.2f}`\n🎯 *Target:* `₹{target:.2f}`\n"
+                        f"🎯 *Target:* `₹{target:.2f}`\n"
                         f"🛑 *Stop Loss:* `₹{sl:.2f}`\n⭐ *Score:* `{buy_score}/7`"
                     )
                     send_telegram(msg)
 
-            elif sell_score >= 6 and below_vwap and bearish_trend and bearish_rsi and volume_confirmed and bearish_confirmed:
+            elif sell_score >= 5 and below_vwap:
                 if not is_duplicate_alert(display_name, "SELL"):
                     sl = close + sl_points
                     target = close - target_points
                     msg = (
-                        "🔴 *STRONG SELL ALERT*\n━━━━━━━━━━━━━━━━━━━━\n"
+                        "🔴 *SELL ALERT*\n━━━━━━━━━━━━━━━━━━━━\n"
                         f"📌 *Asset:* `{display_name}`\n💰 *Price:* `₹{close:.2f}`\n"
-                        f"🎯 *Entry:* `₹{close:.2f}`\n🎯 *Target:* `₹{target:.2f}`\n"
+                        f"🎯 *Target:* `₹{target:.2f}`\n"
                         f"🛑 *Stop Loss:* `₹{sl:.2f}`\n⭐ *Score:* `{sell_score}/7`"
                     )
                     send_telegram(msg)
@@ -266,16 +260,16 @@ def scan_markets():
             print(f"[Error scanning {display_name}] {e}")
 
 # ============================================================
-# 10. MAIN EXECUTION
+# 9. MAIN EXECUTION
 # ============================================================
 
-print("Starting Main Market Scanner Loop...")
-# बोट स्टार्ट होते ही यह तुरंत टेस्ट मैसेज भेजेगा
-send_telegram("🚀 *100% NON-STOP TRADING BOT ACTIVATED!* \n\n_Scanning Indian Stocks & Commodities_")
+if __name__ == "__main__":
+    print("Starting Main Market Scanner Loop...")
+    send_telegram("🚀 *TRADING BOT ONLINE & SCANNING!*\n\n_System Started Successfully with Correct Token._")
 
-while True:
-    try:
-        scan_markets()
-    except Exception as e:
-        print(f"[MAIN LOOP ERROR] {e}")
-    time.sleep(180)
+    while True:
+        try:
+            scan_markets()
+        except Exception as e:
+            print(f"[MAIN LOOP ERROR] {e}")
+        time.sleep(180)
