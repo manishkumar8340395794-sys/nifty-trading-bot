@@ -25,7 +25,7 @@ def run_server():
 
     try:
         with socketserver.TCPServer(("", PORT), HealthHandler) as httpd:
-            print(f"Health server started on port {PORT}")
+            print(f"[Health Server] Running on port {PORT}")
             httpd.serve_forever()
     except Exception as e:
         print(f"[Health Server Error] {e}")
@@ -42,14 +42,14 @@ def keep_alive():
         if APP_URL:
             try:
                 requests.get(APP_URL, timeout=15)
-                print("[Keep Alive] OK")
+                print("[Keep Alive] Ping Successful")
             except Exception as e:
                 print(f"[Keep Alive Error] {e}")
 
 threading.Thread(target=keep_alive, daemon=True).start()
 
 # ============================================================
-# 3. TELEGRAM SETTINGS (आपकी सही आईडी और पूरा टोकन)
+# 3. TELEGRAM CONFIGURATION
 # ============================================================
 
 TELEGRAM_BOT_TOKEN = "8993254284:AAGs5LwFD5PD0UMViDpDd8OY35IOSTMwyNE"
@@ -58,7 +58,7 @@ TELEGRAM_CHAT_ID = "5660614483"
 IST = pytz.timezone("Asia/Kolkata")
 
 # ============================================================
-# 4. TELEGRAM FUNCTION
+# 4. TELEGRAM SENDER FUNCTION
 # ============================================================
 
 def send_telegram(message):
@@ -69,16 +69,17 @@ def send_telegram(message):
         "parse_mode": "Markdown",
     }
     try:
-        response = requests.post(url, json=payload, timeout=15)
+        response = requests.post(url, json=payload, timeout=10)
         response.raise_for_status()
         result = response.json()
         if result.get("ok"):
-            print("[Telegram] Message sent successfully!")
+            print("[Telegram] Alert sent successfully!")
             return True
-        print(f"[Telegram] API Error: {result}")
-        return False
+        else:
+            print(f"[Telegram API Error] {result}")
+            return False
     except Exception as e:
-        print(f"[Telegram Error] {e}")
+        print(f"[Telegram Exception] {e}")
         return False
 
 # ============================================================
@@ -119,7 +120,7 @@ WATCHLIST = {
 }
 
 # ============================================================
-# 7. INDICATORS
+# 7. TECHNICAL INDICATORS
 # ============================================================
 
 def calculate_vwap(df):
@@ -166,7 +167,7 @@ def bearish_candle(row):
     return row["Close"] < row["Open"] and (body / candle_range) >= 0.40
 
 # ============================================================
-# 8. SCAN MARKETS
+# 8. MARKET SCANNER
 # ============================================================
 
 def scan_markets():
@@ -177,11 +178,12 @@ def scan_markets():
 
     for ticker, display_name in WATCHLIST.items():
         try:
-            print(f"Scanning: {display_name}...")
+            print(f"Scanning Asset: {display_name}...")
             ticker_obj = yf.Ticker(ticker, session=session)
             df = ticker_obj.history(period="5d", interval="5m", auto_adjust=False, prepost=False)
 
-            if df.empty:
+            if df is None or df.empty:
+                print(f"[Warning] No data for {display_name}")
                 continue
 
             if isinstance(df.columns, pd.MultiIndex):
@@ -227,7 +229,7 @@ def scan_markets():
             buy_score = sum([above_vwap, bullish_cross*2, bullish_trend, bullish_rsi, volume_confirmed, bullish_confirmed])
             sell_score = sum([below_vwap, bearish_cross*2, bearish_trend, bearish_rsi, volume_confirmed, bearish_confirmed])
 
-            print(f"{display_name}: Price=₹{close:.2f} | RSI={rsi:.2f} | BUY={buy_score}/7 | SELL={sell_score}/7")
+            print(f"{display_name}: Price=₹{close:.2f} | BUY={buy_score}/7 | SELL={sell_score}/7")
 
             sl_points = max(atr * 1.20, close * 0.004)
             target_points = sl_points * 2
@@ -260,12 +262,24 @@ def scan_markets():
             print(f"[Error scanning {display_name}] {e}")
 
 # ============================================================
-# 9. MAIN EXECUTION
+# 9. MAIN LOOP EXECUTION
 # ============================================================
 
 if __name__ == "__main__":
-    print("Starting Main Market Scanner Loop...")
-    send_telegram("🚀 *TRADING BOT ONLINE & SCANNING!*\n\n_System Started Successfully with Correct Token._")
+    print("Initializing Application...")
+    
+    # कोड शुरू होते ही सबसे पहले तुरंत टेलीग्राम मैसेज भेजेगा
+    startup_msg = (
+        "🚀 *TRADING BOT ONLINE*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "✅ *Token:* Verified\n"
+        "✅ *Chat ID:* Verified\n"
+        "📡 *Scanner:* Active & Ready"
+    )
+    
+    sent = send_telegram(startup_msg)
+    if not sent:
+        print("[CRITICAL ERROR] Failed to send initial Telegram message!")
 
     while True:
         try:
