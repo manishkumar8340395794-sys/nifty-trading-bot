@@ -33,7 +33,7 @@ def run_server():
     except Exception as e:
         print(f"[Health Server Error]: {e}")
 
-# सर्वर को बैकग्राउंड थ्रेड में चलाएं
+# Server in background
 server_thread = threading.Thread(target=run_server, daemon=True)
 server_thread.start()
 
@@ -57,7 +57,7 @@ ping_thread.start()
 # =========================================================
 # 3. TELEGRAM SETTINGS
 # =========================================================
-TELEGRAM_BOT_TOKEN = "8993254284:AAGs..."  # आपका पुराना बॉट टोकन
+TELEGRAM_BOT_TOKEN = "8993254284:AAGs..."  # अपना पूरा सही टोकन यहाँ डालें
 TELEGRAM_CHAT_ID = "5660614483"             # आपकी चैट आईडी
 IST = pytz.timezone("Asia/Kolkata")
 
@@ -77,7 +77,29 @@ def send_telegram(message):
         return False
 
 # =========================================================
-# 4. MAIN LOOP (MARKET SCANNER)
+# 4. WATCHLIST & SCANNER
+# =========================================================
+WATCHLIST = {
+    "SBIN.NS": {"name": "SBI (NSE)"},
+    "PNB.NS": {"name": "PNB (NSE)"},
+    "GAIL.NS": {"name": "GAIL (NSE)"},
+    "IOC.NS": {"name": "IOC (NSE)"},
+    "FEDERALBNK.NS": {"name": "FEDERAL BANK"},
+    "ASHOKLEY.NS": {"name": "ASHOK LEYLAND"}
+}
+
+def scan_markets():
+    for ticker, info in WATCHLIST.items():
+        try:
+            df = yf.download(ticker, period="2d", interval="5m", progress=False)
+            if not df.empty:
+                last_price = round(df['Close'].iloc[-1], 2)
+                print(f"Checking {info['name']}: ₹{last_price}")
+        except Exception as e:
+            print(f"Error scanning {ticker}: {e}")
+
+# =========================================================
+# 5. MAIN LOOP
 # =========================================================
 print("Starting Main Market Scanner Loop...")
 send_telegram("🚀 *100% NON-STOP TRADING BOT STARTED & SCANNING MARKETS!*")
@@ -86,11 +108,8 @@ while True:
     try:
         now_ist = datetime.now(IST)
         print(f"[{now_ist.strftime('%Y-%m-%d %H:%M:%S')}] Scanning Markets...")
-        
-        # यहाँ आपका मार्केट स्कैनिंग लॉजिक/फ़ंक्शन (scan_markets()) रहेगा
-        # scan_markets()
-        
+        scan_markets()
     except Exception as e:
         print(f"[MAIN LOOP ERROR] {e}")
     
-    time.sleep(60)  # हर 1 मिनट में मार्केट स्कैन करेगा
+    time.sleep(180)  # हर 3 मिनट में मार्केट स्कैन करेगा
