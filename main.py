@@ -69,7 +69,7 @@ IST = pytz.timezone("Asia/Kolkata")
 # ============================================================
 
 def send_telegram(message):
-    if not TELEGRAM_BOT_TOKEN or "PASTE_YOUR_NEW" in TELEGRAM_BOT_TOKEN:
+    if not TELEGRAM_BOT_TOKEN:
         print("[Telegram] ERROR: Bot token is missing.")
         return False
 
@@ -99,23 +99,24 @@ def send_telegram(message):
 
 
 # ============================================================
-# 5. DUPLICATE ALERT PROTECTION (COOLDOWN LOGIC)
+# 5. STRICT COOLDOWN LOGIC (एक ही स्क्रिप्ट बार-बार नहीं आएगी)
 # ============================================================
 
 sent_alerts = {}
 
-
-def is_duplicate_alert(symbol, alert_type, cooldown_minutes=45):
+def should_send_alert(symbol, alert_type, cooldown_minutes=45):
     key = f"{symbol}_{alert_type}"
     now = time.time()
 
     if key in sent_alerts:
-        elapsed = now - sent_alerts[key]
-        if elapsed < cooldown_minutes * 60:
-            return True
+        elapsed_minutes = (now - sent_alerts[key]) / 60
+        if elapsed_minutes < cooldown_minutes:
+            print(f"[SKIP] {symbol} ({alert_type}) blocked by cooldown ({int(cooldown_minutes - elapsed_minutes)} min left)")
+            return False
 
+    # रिकॉर्ड अपडेट करें
     sent_alerts[key] = now
-    return False
+    return True
 
 
 # ============================================================
@@ -124,7 +125,7 @@ def is_duplicate_alert(symbol, alert_type, cooldown_minutes=45):
 
 WATCHLIST = {
     # -------------------------
-    # F&O INDEX FUTURES & STOCKS
+    # F&O INDEX & STOCKS
     # -------------------------
     "^NSEI": "NIFTY 50",
     "^NSEBANK": "BANK NIFTY",
@@ -152,7 +153,7 @@ WATCHLIST = {
 
 
 # ============================================================
-# 7. SESSION VWAP
+# 7. TECHNICAL INDICATORS
 # ============================================================
 
 def calculate_vwap(df):
@@ -172,10 +173,6 @@ def calculate_vwap(df):
     return cumulative_pv / (cumulative_volume + 1e-9)
 
 
-# ============================================================
-# 8. RSI
-# ============================================================
-
 def calculate_rsi(series, window=14):
     delta = series.diff()
     gain = delta.where(delta > 0, 0)
@@ -188,10 +185,6 @@ def calculate_rsi(series, window=14):
     return 100 - (100 / (1 + rs))
 
 
-# ============================================================
-# 9. ATR
-# ============================================================
-
 def calculate_atr(df, window=14):
     high_low = df["High"] - df["Low"]
     high_close = (df["High"] - df["Close"].shift()).abs()
@@ -202,26 +195,6 @@ def calculate_atr(df, window=14):
 
     return true_range.ewm(alpha=1 / window, adjust=False, min_periods=window).mean()
 
-
-# ============================================================
-# 10. MARKET HOURS
-# ============================================================
-
-def is_market_open():
-    now = datetime.now(IST)
-    if now.weekday() >= 5:  # Saturday/Sunday
-        return False
-
-    current_time = now.time()
-    if current_time.hour >= 9 and current_time.hour <= 23:
-        return True
-
-    return False
-
-
-# ============================================================
-# 11. CANDLE CONFIRMATION
-# ============================================================
 
 def bullish_candle(row):
     candle_range = row["High"] - row["Low"]
@@ -240,7 +213,7 @@ def bearish_candle(row):
 
 
 # ============================================================
-# 12. SCAN MARKETS
+# 8. MARKET SCANNER
 # ============================================================
 
 def scan_markets():
@@ -251,26 +224,17 @@ def scan_markets():
 
     for ticker, display_name in WATCHLIST.items():
         try:
-            print(f"\nScanning: {display_name}")
-
             ticker_obj = yf.Ticker(ticker, session=session)
             df = ticker_obj.history(period="5d", interval="5m", auto_adjust=False, prepost=False)
 
             if df.empty:
-                print(f"{display_name}: No data.")
                 continue
 
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
 
-            required_columns = ["Open", "High", "Low", "Close", "Volume"]
-            if not all(col in df.columns for col in required_columns):
-                print(f"{display_name}: Required columns missing.")
-                continue
-
             df = df.dropna(subset=["Open", "High", "Low", "Close"])
             if len(df) < 30:
-                print(f"{display_name}: Not enough candles.")
                 continue
 
             df["VWAP"] = calculate_vwap(df)
@@ -313,55 +277,49 @@ def scan_markets():
             buy_score = sum([above_vwap, bullish_cross * 2, bullish_trend, bullish_rsi, volume_confirmed, bullish_confirmed])
             sell_score = sum([below_vwap, bearish_cross * 2, bearish_trend, bearish_rsi, volume_confirmed, bearish_confirmed])
 
-            print(f"{display_name}: Price=₹{close:.2f} | RSI={rsi:.2f} | BUY={buy_score}/7 | SELL={sell_score}/7")
-
             sl_points = max(atr * 1.20, close * 0.004)
             target_points = sl_points * 2
 
             # BUY ALERT
             if buy_score >= 5 and above_vwap:
-                if not is_duplicate_alert(display_name, "BUY", cooldown_minutes=45):
+                if should_send_alert(display_name, "BUY", cooldown_minutes=45):
                     sl = close - sl_points
                     target = close + target_points
                     risk = close - sl
                     reward = target - close
 
                     message = (
-                        "🟢 *BUY ALERT (F&O / Equity / Commodity)*\n"
+                        "🟢 *BUY ALERT*\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
                         f"📌 *Asset:* `{display_name}`\n"
                         f"💰 *Price:* `₹{close:.2f}`\n"
                         f"📊 *VWAP:* `₹{vwap:.2f}` (Above ✅)\n"
-                        f"📈 *RSI:* `{rsi:.2f}`\n"
-                        f"📈 *EMA 9/21:* `{ema9:.2f}` / `{ema21:.2f}`\n\n"
+                        f"📈 *RSI:* `{rsi:.2f}`\n\n"
                         f"🎯 *Entry:* `₹{close:.2f}`\n"
                         f"🎯 *Target:* `₹{target:.2f}` (+₹{reward:.2f})\n"
                         f"🛑 *Stop Loss:* `₹{sl:.2f}` (-₹{risk:.2f})\n"
-                        f"⚖️ *Risk/Reward:* 1:2\n"
                         f"⭐ *Score:* `{buy_score}/7`"
                     )
                     send_telegram(message)
 
             # SELL ALERT
             elif sell_score >= 5 and below_vwap:
-                if not is_duplicate_alert(display_name, "SELL", cooldown_minutes=45):
+                if should_send_alert(display_name, "SELL", cooldown_minutes=45):
                     sl = close + sl_points
                     target = close - target_points
                     risk = sl - close
                     reward = close - target
 
                     message = (
-                        "🔴 *SELL ALERT (F&O / Equity / Commodity)*\n"
+                        "🔴 *SELL ALERT*\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
                         f"📌 *Asset:* `{display_name}`\n"
                         f"💰 *Price:* `₹{close:.2f}`\n"
                         f"📊 *VWAP:* `₹{vwap:.2f}` (Below 🔻)\n"
-                        f"📉 *RSI:* `{rsi:.2f}`\n"
-                        f"📉 *EMA 9/21:* `{ema9:.2f}` / `{ema21:.2f}`\n\n"
+                        f"📉 *RSI:* `{rsi:.2f}`\n\n"
                         f"🎯 *Entry:* `₹{close:.2f}`\n"
                         f"🎯 *Target:* `₹{target:.2f}` (-₹{reward:.2f})\n"
                         f"🛑 *Stop Loss:* `₹{sl:.2f}` (+₹{risk:.2f})\n"
-                        f"⚖️ *Risk/Reward:* 1:2\n"
                         f"⭐ *Score:* `{sell_score}/7`"
                     )
                     send_telegram(message)
@@ -371,30 +329,26 @@ def scan_markets():
 
 
 # ============================================================
-# 13. MAIN LOOP EXECUTION
+# 9. MAIN LOOP EXECUTION
 # ============================================================
 
 if __name__ == "__main__":
     print("Initializing Application...")
 
     startup_msg = (
-        "🚀 *MANI TRADING BOT SYSTEM ACTIVE*\n"
+        "🚀 *MANI TRADING BOT ACTIVATED*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "✅ *Token & Chat ID:* Configured\n"
         "✅ *Currency:* INR (₹)\n"
-        "✅ *Markets:* F&O, Commodities, Stocks\n"
-        "⏳ *Cooldown Filter:* Active (45 Min)"
+        "✅ *Cooldown:* 45 Minutes per Asset\n"
+        "📡 *Status:* Scanning Active"
     )
 
     send_telegram(startup_msg)
 
     while True:
         try:
-            if is_market_open():
-                scan_markets()
-            else:
-                print("Market is closed. Sleeping...")
+            scan_markets()
         except Exception as e:
             print(f"[MAIN LOOP ERROR] {e}")
 
-        time.sleep(300)  # Scan every 5 minutes
+        time.sleep(180)  # Scan every 3 minutes
