@@ -1,0 +1,32 @@
+name: Run Commodity Bot (MCX)
+
+on:
+  schedule:
+    # Runs every 10 minutes during MCX Market hours (03:30 to 18:00 UTC = 09:00 to 23:30 IST)
+    - cron: '*/10 3-18 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  run-commodity-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out Repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Execute Commodity Bot
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: python commodity_bot.py
+      
