@@ -99,10 +99,11 @@ def send_telegram(message):
 
 
 # ============================================================
-# 5. STRICT COOLDOWN LOGIC (एक ही स्क्रिप्ट बार-बार नहीं आएगी)
+# 5. COOLDOWN & ACTIVE TRADES ENGINE (TARGET / SL TRACKER)
 # ============================================================
 
 sent_alerts = {}
+active_trades = {}  # खुली हुई ट्रेड्स की जानकारी रखेगा
 
 def should_send_alert(symbol, alert_type, cooldown_minutes=45):
     key = f"{symbol}_{alert_type}"
@@ -114,7 +115,6 @@ def should_send_alert(symbol, alert_type, cooldown_minutes=45):
             print(f"[SKIP] {symbol} ({alert_type}) blocked by cooldown ({int(cooldown_minutes - elapsed_minutes)} min left)")
             return False
 
-    # रिकॉर्ड अपडेट करें
     sent_alerts[key] = now
     return True
 
@@ -124,9 +124,7 @@ def should_send_alert(symbol, alert_type, cooldown_minutes=45):
 # ============================================================
 
 WATCHLIST = {
-    # -------------------------
-    # F&O INDEX & STOCKS
-    # -------------------------
+    # F&O Index & Stocks
     "^NSEI": "NIFTY 50",
     "^NSEBANK": "BANK NIFTY",
     "SBIN.NS": "SBI",
@@ -142,9 +140,7 @@ WATCHLIST = {
     "TATAMOTORS.NS": "TATA MOTORS",
     "RELIANCE.NS": "RELIANCE",
 
-    # -------------------------
-    # COMMODITIES
-    # -------------------------
+    # Commodities
     "GC=F": "GOLD",
     "SI=F": "SILVER",
     "CL=F": "CRUDE OIL",
@@ -158,7 +154,7 @@ WATCHLIST = {
 
 def calculate_vwap(df):
     data = df.copy()
-    volume = data["Volume"].fillna(0)
+    volume = data["Volume"].fillna(1)
     typical_price = (data["High"] + data["Low"] + data["Close"]) / 3
 
     if data.index.tz is None:
@@ -170,7 +166,8 @@ def calculate_vwap(df):
     cumulative_pv = (typical_price * volume).groupby(session_date).cumsum()
     cumulative_volume = volume.groupby(session_date).cumsum()
 
-    return cumulative_pv / (cumulative_volume + 1e-9)
+    vwap = cumulative_pv / (cumulative_volume + 1e-9)
+    return vwap.fillna(data["Close"])
 
 
 def calculate_rsi(series, window=14):
@@ -201,7 +198,7 @@ def bullish_candle(row):
     if candle_range <= 0:
         return False
     body = abs(row["Close"] - row["Open"])
-    return row["Close"] > row["Open"] and (body / candle_range) >= 0.45
+    return row["Close"] > row["Open"] and (body / candle_range) >= 0.40
 
 
 def bearish_candle(row):
@@ -209,11 +206,11 @@ def bearish_candle(row):
     if candle_range <= 0:
         return False
     body = abs(row["Close"] - row["Open"])
-    return row["Close"] < row["Open"] and (body / candle_range) >= 0.45
+    return row["Close"] < row["Open"] and (body / candle_range) >= 0.40
 
 
 # ============================================================
-# 8. MARKET SCANNER
+# 8. MARKET SCANNER + TARGET/SL MONITORING
 # ============================================================
 
 def scan_markets():
@@ -234,20 +231,25 @@ def scan_markets():
                 df.columns = df.columns.get_level_values(0)
 
             df = df.dropna(subset=["Open", "High", "Low", "Close"])
-            if len(df) < 30:
+            if len(df) < 20:
                 continue
+
+            if "Volume" not in df.columns or df["Volume"].sum() == 0:
+                df["Volume"] = 1000
 
             df["VWAP"] = calculate_vwap(df)
             df["RSI"] = calculate_rsi(df["Close"])
             df["EMA_9"] = df["Close"].ewm(span=9, adjust=False).mean()
             df["EMA_21"] = df["Close"].ewm(span=21, adjust=False).mean()
             df["ATR"] = calculate_atr(df)
-            df["Volume_MA"] = df["Volume"].rolling(20).mean()
+            df["Volume_MA"] = df["Volume"].rolling(20).mean().fillna(100)
 
             latest = df.iloc[-2]
             prev = df.iloc[-3]
 
             close = float(latest["Close"])
+            high = float(latest["High"])
+            low = float(latest["Low"])
             vwap = float(latest["VWAP"])
             rsi = float(latest["RSI"])
             ema9 = float(latest["EMA_9"])
@@ -258,38 +260,106 @@ def scan_markets():
             volume = float(latest["Volume"])
             volume_ma = float(latest["Volume_MA"])
 
-            values = [close, vwap, rsi, ema9, ema21, prev_ema9, prev_ema21, atr, volume_ma]
-            if any(np.isnan(x) for x in values) or atr <= 0:
-                continue
+            # ----------------------------------------------------
+            # A. पहले से चल रही ट्रेड्स (ACTIVE TRADES) की चेकिंग
+            # ----------------------------------------------------
+            if display_name in active_trades:
+                trade = active_trades[display_name]
 
+                # Buy Trade का Target / SL Check
+                if trade["type"] == "BUY":
+                    if high >= trade["target"]:
+                        msg = (
+                            "🎯 *TARGET ACHIEVED! (PROFIT HIT)* 🎉\n"
+                            "━━━━━━━━━━━━━━━━━━━━\n"
+                            f"📌 *Asset:* `{display_name}`\n"
+                            f"🚀 *Entry:* `₹{trade['entry']:.2f}`\n"
+                            f"🎯 *Target Hit:* `₹{trade['target']:.2f}`\n"
+                            f"💰 *Profit:* `+₹{trade['target'] - trade['entry']:.2f}`"
+                        )
+                        send_telegram(msg)
+                        del active_trades[display_name]
+
+                    elif low <= trade["sl"]:
+                        msg = (
+                            "🛑 *STOP LOSS HIT! (TRADE CLOSED)* ⚠️\n"
+                            "━━━━━━━━━━━━━━━━━━━━\n"
+                            f"📌 *Asset:* `{display_name}`\n"
+                            f"🚀 *Entry:* `₹{trade['entry']:.2f}`\n"
+                            f"🛑 *SL Hit:* `₹{trade['sl']:.2f}`\n"
+                            f"📉 *Loss:* `-₹{trade['entry'] - trade['sl']:.2f}`"
+                        )
+                        send_telegram(msg)
+                        del active_trades[display_name]
+
+                # Sell Trade का Target / SL Check
+                elif trade["type"] == "SELL":
+                    if low <= trade["target"]:
+                        msg = (
+                            "🎯 *TARGET ACHIEVED! (PROFIT HIT)* 🎉\n"
+                            "━━━━━━━━━━━━━━━━━━━━\n"
+                            f"📌 *Asset:* `{display_name}`\n"
+                            f"📉 *Entry:* `₹{trade['entry']:.2f}`\n"
+                            f"🎯 *Target Hit:* `₹{trade['target']:.2f}`\n"
+                            f"💰 *Profit:* `+₹{trade['entry'] - trade['target']:.2f}`"
+                        )
+                        send_telegram(msg)
+                        del active_trades[display_name]
+
+                    elif high >= trade["sl"]:
+                        msg = (
+                            "🛑 *STOP LOSS HIT! (TRADE CLOSED)* ⚠️\n"
+                            "━━━━━━━━━━━━━━━━━━━━\n"
+                            f"📌 *Asset:* `{display_name}`\n"
+                            f"📉 *Entry:* `₹{trade['entry']:.2f}`\n"
+                            f"🛑 *SL Hit:* `₹{trade['sl']:.2f}`\n"
+                            f"📉 *Loss:* `-₹{trade['sl'] - trade['entry']:.2f}`"
+                        )
+                        send_telegram(msg)
+                        del active_trades[display_name]
+
+            # ----------------------------------------------------
+            # B. नए सिग्नल खोजना (NEW SIGNAL SCANNER)
+            # ----------------------------------------------------
             bullish_cross = prev_ema9 <= prev_ema21 and ema9 > ema21
             bearish_cross = prev_ema9 >= prev_ema21 and ema9 < ema21
-            above_vwap = close > vwap
-            below_vwap = close < vwap
-            bullish_rsi = 50 <= rsi <= 70
-            bearish_rsi = 30 <= rsi <= 50
-            volume_confirmed = volume >= volume_ma * 1.10
+            above_vwap = close >= vwap
+            below_vwap = close <= vwap
+            bullish_rsi = 48 <= rsi <= 72
+            bearish_rsi = 28 <= rsi <= 52
+
+            is_commodity = "=F" in ticker
+            volume_confirmed = True if is_commodity else (volume >= volume_ma * 1.05)
+
             bullish_confirmed = bullish_candle(latest)
             bearish_confirmed = bearish_candle(latest)
-            bullish_trend = ema9 > ema21 and close > ema9
-            bearish_trend = ema9 < ema21 and close < ema9
+            bullish_trend = ema9 > ema21
+            bearish_trend = ema9 < ema21
 
             buy_score = sum([above_vwap, bullish_cross * 2, bullish_trend, bullish_rsi, volume_confirmed, bullish_confirmed])
             sell_score = sum([below_vwap, bearish_cross * 2, bearish_trend, bearish_rsi, volume_confirmed, bearish_confirmed])
 
-            sl_points = max(atr * 1.20, close * 0.004)
+            sl_points = max(atr * 1.20, close * 0.003)
             target_points = sl_points * 2
 
-            # BUY ALERT
-            if buy_score >= 5 and above_vwap:
+            # NEW BUY SIGNAL
+            if buy_score >= 4 and above_vwap:
                 if should_send_alert(display_name, "BUY", cooldown_minutes=45):
                     sl = close - sl_points
                     target = close + target_points
                     risk = close - sl
                     reward = target - close
 
+                    # ट्रेड एक्टिव लिस्ट में सेव करें
+                    active_trades[display_name] = {
+                        "type": "BUY",
+                        "entry": close,
+                        "target": target,
+                        "sl": sl
+                    }
+
                     message = (
-                        "🟢 *BUY ALERT*\n"
+                        "🟢 *NEW BUY ENTRY*\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
                         f"📌 *Asset:* `{display_name}`\n"
                         f"💰 *Price:* `₹{close:.2f}`\n"
@@ -302,16 +372,24 @@ def scan_markets():
                     )
                     send_telegram(message)
 
-            # SELL ALERT
-            elif sell_score >= 5 and below_vwap:
+            # NEW SELL SIGNAL
+            elif sell_score >= 4 and below_vwap:
                 if should_send_alert(display_name, "SELL", cooldown_minutes=45):
                     sl = close + sl_points
                     target = close - target_points
                     risk = sl - close
                     reward = close - target
 
+                    # ट्रेड एक्टिव लिस्ट में सेव करें
+                    active_trades[display_name] = {
+                        "type": "SELL",
+                        "entry": close,
+                        "target": target,
+                        "sl": sl
+                    }
+
                     message = (
-                        "🔴 *SELL ALERT*\n"
+                        "🔴 *NEW SELL ENTRY*\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
                         f"📌 *Asset:* `{display_name}`\n"
                         f"💰 *Price:* `₹{close:.2f}`\n"
@@ -336,10 +414,10 @@ if __name__ == "__main__":
     print("Initializing Application...")
 
     startup_msg = (
-        "🚀 *MANI TRADING BOT ACTIVATED*\n"
+        "🚀 *MANI TRADING BOT ADVANCED ACTIVATED*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "✅ *Currency:* INR (₹)\n"
-        "✅ *Cooldown:* 45 Minutes per Asset\n"
+        "✅ *Real-time Position Tracker:* ACTIVE\n"
+        "✅ *Target & StopLoss Alerts:* ENABLED\n"
         "📡 *Status:* Scanning Active"
     )
 
