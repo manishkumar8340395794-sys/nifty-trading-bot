@@ -99,11 +99,30 @@ def send_telegram(message):
 
 
 # ============================================================
-# 5. COOLDOWN & ACTIVE TRADES ENGINE (TARGET / SL TRACKER)
+# 5. LIVE USD TO INR CONVERTER ENGINE
+# ============================================================
+
+usd_inr_rate = 83.50  # डिफ़ॉल्ट बैकअप रेट
+
+def get_usd_inr_rate():
+    global usd_inr_rate
+    try:
+        ticker = yf.Ticker("USDINR=X")
+        df = ticker.history(period="1d")
+        if not df.empty:
+            usd_inr_rate = float(df["Close"].iloc[-1])
+            print(f"[USD/INR Rate Updated] 1 USD = ₹{usd_inr_rate:.2f}")
+    except Exception as e:
+        print(f"[USD/INR Fetch Error] Using default rate ₹{usd_inr_rate}: {e}")
+    return usd_inr_rate
+
+
+# ============================================================
+# 6. COOLDOWN & ACTIVE TRADES ENGINE
 # ============================================================
 
 sent_alerts = {}
-active_trades = {}  # खुली हुई ट्रेड्स की जानकारी रखेगा
+active_trades = {}
 
 def should_send_alert(symbol, alert_type, cooldown_minutes=45):
     key = f"{symbol}_{alert_type}"
@@ -120,11 +139,11 @@ def should_send_alert(symbol, alert_type, cooldown_minutes=45):
 
 
 # ============================================================
-# 6. WATCHLIST (EQUITY, F&O, COMMODITIES)
+# 7. WATCHLIST
 # ============================================================
 
 WATCHLIST = {
-    # F&O Index & Stocks
+    # Equity & F&O
     "^NSEI": "NIFTY 50",
     "^NSEBANK": "BANK NIFTY",
     "SBIN.NS": "SBI",
@@ -140,16 +159,16 @@ WATCHLIST = {
     "TATAMOTORS.NS": "TATA MOTORS",
     "RELIANCE.NS": "RELIANCE",
 
-    # Commodities
-    "GC=F": "GOLD",
-    "SI=F": "SILVER",
-    "CL=F": "CRUDE OIL",
-    "NG=F": "NATURAL GAS",
+    # Commodities (MCX Indian Rupee Standard)
+    "GC=F": "GOLD (MCX Approx)",
+    "SI=F": "SILVER (MCX Approx)",
+    "CL=F": "CRUDE OIL (MCX ₹/Barrel)",
+    "NG=F": "NATURAL GAS (MCX ₹/mmbtu)",
 }
 
 
 # ============================================================
-# 7. TECHNICAL INDICATORS
+# 8. TECHNICAL INDICATORS
 # ============================================================
 
 def calculate_vwap(df):
@@ -210,10 +229,11 @@ def bearish_candle(row):
 
 
 # ============================================================
-# 8. MARKET SCANNER + TARGET/SL MONITORING
+# 9. MARKET SCANNER WITH INR CONVERSION
 # ============================================================
 
 def scan_markets():
+    usdinr = get_usd_inr_rate()  # डोलर का ताज़ा इंडियन रुपया रेट
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36"
@@ -233,6 +253,18 @@ def scan_markets():
             df = df.dropna(subset=["Open", "High", "Low", "Close"])
             if len(df) < 20:
                 continue
+
+            # ----------------------------------------------------
+            # COMMODITY PRICE TO INDIAN RUPEES (MCX ALIGNMENT)
+            # ----------------------------------------------------
+            if ticker == "CL=F":       # CRUDE OIL (1 Barrel in INR)
+                df[["Open", "High", "Low", "Close"]] *= usdinr
+            elif ticker == "NG=F":     # NATURAL GAS
+                df[["Open", "High", "Low", "Close"]] *= usdinr
+            elif ticker == "GC=F":     # GOLD (Per 10 Gram INR approx)
+                df[["Open", "High", "Low", "Close"]] *= (usdinr / 31.1035) * 10
+            elif ticker == "SI=F":     # SILVER (Per 1 KG INR approx)
+                df[["Open", "High", "Low", "Close"]] *= (usdinr / 31.1035) * 1000
 
             if "Volume" not in df.columns or df["Volume"].sum() == 0:
                 df["Volume"] = 1000
@@ -261,12 +293,12 @@ def scan_markets():
             volume_ma = float(latest["Volume_MA"])
 
             # ----------------------------------------------------
-            # A. पहले से चल रही ट्रेड्स (ACTIVE TRADES) की चेकिंग
+            # A. ACTIVE TRADES MONITORING
             # ----------------------------------------------------
             if display_name in active_trades:
                 trade = active_trades[display_name]
 
-                # Buy Trade का Target / SL Check
+                # BUY Trade Check
                 if trade["type"] == "BUY":
                     if high >= trade["target"]:
                         msg = (
@@ -292,7 +324,7 @@ def scan_markets():
                         send_telegram(msg)
                         del active_trades[display_name]
 
-                # Sell Trade का Target / SL Check
+                # SELL Trade Check
                 elif trade["type"] == "SELL":
                     if low <= trade["target"]:
                         msg = (
@@ -319,7 +351,7 @@ def scan_markets():
                         del active_trades[display_name]
 
             # ----------------------------------------------------
-            # B. नए सिग्नल खोजना (NEW SIGNAL SCANNER)
+            # B. NEW SIGNAL SCANNER
             # ----------------------------------------------------
             bullish_cross = prev_ema9 <= prev_ema21 and ema9 > ema21
             bearish_cross = prev_ema9 >= prev_ema21 and ema9 < ema21
@@ -350,7 +382,6 @@ def scan_markets():
                     risk = close - sl
                     reward = target - close
 
-                    # ट्रेड एक्टिव लिस्ट में सेव करें
                     active_trades[display_name] = {
                         "type": "BUY",
                         "entry": close,
@@ -380,7 +411,6 @@ def scan_markets():
                     risk = sl - close
                     reward = close - target
 
-                    # ट्रेड एक्टिव लिस्ट में सेव करें
                     active_trades[display_name] = {
                         "type": "SELL",
                         "entry": close,
@@ -407,17 +437,17 @@ def scan_markets():
 
 
 # ============================================================
-# 9. MAIN LOOP EXECUTION
+# 10. MAIN LOOP EXECUTION
 # ============================================================
 
 if __name__ == "__main__":
     print("Initializing Application...")
 
     startup_msg = (
-        "🚀 *MANI TRADING BOT ADVANCED ACTIVATED*\n"
+        "🚀 *MANI TRADING BOT (INDIAN MARKET RS FORMAT ACTIVATED)*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "✅ *Real-time Position Tracker:* ACTIVE\n"
-        "✅ *Target & StopLoss Alerts:* ENABLED\n"
+        "🇮🇳 *INR Conversion:* ACTIVE (Crude/Gold/Silver in ₹)\n"
+        "🎯 *Position Tracker:* ENABLED\n"
         "📡 *Status:* Scanning Active"
     )
 
