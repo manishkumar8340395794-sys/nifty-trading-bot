@@ -2,3 +2,5 @@ requests
 pandas
 yfinance
 schedule
+smartapi-python
+pyotp
