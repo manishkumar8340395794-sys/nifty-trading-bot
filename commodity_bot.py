@@ -26,18 +26,31 @@ if not TELEGRAM_BOT_TOKEN:
 if not TELEGRAM_CHAT_ID:
     TELEGRAM_CHAT_ID = "5660614483"
 
-# COMMODITY WATCHLIST (Yahoo Finance Symbols)
+# COMMODITIES WITH MCX MULTIPLIERS (Dollar to INR Conversion)
 COMMODITIES = {
-    "GC=F": "GOLD (MCX / COMEX)",
-    "SI=F": "SILVER (MCX / COMEX)",
-    "CL=F": "CRUDE OIL (MCX / WTI)",
-    "NG=F": "NATURAL GAS (MCX)",
-    "HG=F": "COPPER",
+    "GC=F": {"name": "GOLD (MCX ₹/10g)", "multiplier": 10, "type": "gold"},
+    "SI=F": {"name": "SILVER (MCX ₹/kg)", "multiplier": 1000, "type": "silver"},
+    "CL=F": {"name": "CRUDE OIL (MCX ₹/bbl)", "multiplier": 1, "type": "crude"},
+    "NG=F": {"name": "NATURAL GAS (MCX ₹/mmbtu)", "multiplier": 1, "type": "ng"},
+    "HG=F": {"name": "COPPER (MCX ₹/kg)", "multiplier": 2.20462, "type": "copper"},
 }
 
 # ============================================================
 # UTILITIES & TELEGRAM
 # ============================================================
+
+def get_usdinr_rate(session):
+    try:
+        obj = yf.Ticker("INR=X", session=session)
+        df = obj.history(period="1d", interval="1m")
+        if not df.empty:
+            rate = float(df["Close"].iloc[-1])
+            print(f"[CURRENCY] Live USD/INR Rate: {rate:.2f}")
+            return rate
+    except Exception as e:
+        print(f"[CURRENCY ERROR] {e}")
+    return 83.50  # Fallback exchange rate
+
 
 def send_telegram(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -141,7 +154,6 @@ def calculate_supertrend(df, period=10, multiplier=3.0):
 
         prev_close = df["Close"].iloc[i - 1]
 
-        # Upper Band Calculation
         if (basic_upper.iloc[i] < upper_band.iloc[i - 1]) or (
             prev_close > upper_band.iloc[i - 1]
         ):
@@ -149,7 +161,6 @@ def calculate_supertrend(df, period=10, multiplier=3.0):
         else:
             upper_band.iloc[i] = upper_band.iloc[i - 1]
 
-        # Lower Band Calculation
         if (basic_lower.iloc[i] > lower_band.iloc[i - 1]) or (
             prev_close < lower_band.iloc[i - 1]
         ):
@@ -157,7 +168,6 @@ def calculate_supertrend(df, period=10, multiplier=3.0):
         else:
             lower_band.iloc[i] = lower_band.iloc[i - 1]
 
-        # Trend Determination
         if trend.iloc[i - 1] == 1:
             if df["Close"].iloc[i] < lower_band.iloc[i - 1]:
                 trend.iloc[i] = -1
@@ -172,11 +182,12 @@ def calculate_supertrend(df, period=10, multiplier=3.0):
     return trend, upper_band, lower_band
 
 # ============================================================
-# COMMODITY STRATEGY ENGINE
+# COMMODITY STRATEGY ENGINE (MCX CONVERSION)
 # ============================================================
 
-def analyze_commodity(ticker, name, session):
+def analyze_commodity(ticker, info, session, usdinr):
     try:
+        name = info["name"]
         print(f"[SCAN COMMODITY] {name} ({ticker})...")
         obj = yf.Ticker(ticker, session=session)
         df = obj.history(period="5d", interval="15m", auto_adjust=False)
@@ -221,37 +232,45 @@ def analyze_commodity(ticker, name, session):
         )
 
         sl_distance = max(atr * 1.5, close * 0.005)
-        tp_distance = sl_distance * 2.0  # 1:2 Risk-to-Reward
+        tp_distance = sl_distance * 2.0
+
+        # CONVERT TO MCX INR VALUE
+        mcx_factor = usdinr * info["multiplier"]
+        if info["type"] == "gold":
+            mcx_factor = (usdinr / 31.1035) * 10  # Troy Oz to 10 Grams
+        elif info["type"] == "silver":
+            mcx_factor = (usdinr / 31.1035) * 1000  # Troy Oz to 1 Kg
+
+        mcx_close = close * mcx_factor
+        mcx_vwap = vwap * mcx_factor
+        mcx_tp = (close + tp_distance) * mcx_factor if bullish else (close - tp_distance) * mcx_factor
+        mcx_sl = (close - sl_distance) * mcx_factor if bullish else (close + sl_distance) * mcx_factor
 
         if bullish and not is_duplicate(name, "BUY"):
-            sl = close - sl_distance
-            tp = close + tp_distance
             msg = (
-                "🟡 *COMMODITY BUY SIGNAL*\n"
+                "🟡 *MCX COMMODITY BUY SIGNAL*\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"🛢️ *Asset:* `{name}`\n"
-                f"💰 *Entry:* `{close:.2f}`\n"
-                f"📊 *VWAP:* `{vwap:.2f}` (Above) ✅\n"
+                f"💰 *Entry:* ₹`{mcx_close:.2f}`\n"
+                f"📊 *VWAP:* ₹`{mcx_vwap:.2f}` (Above) ✅\n"
                 f"📈 *RSI:* `{rsi:.2f}`\n"
                 f"⚡ *Supertrend:* BULLISH ✅\n\n"
-                f"🎯 *Target (1:2):* `{tp:.2f}`\n"
-                f"🛑 *Stop Loss:* `{sl:.2f}`"
+                f"🎯 *Target (1:2):* ₹`{mcx_tp:.2f}`\n"
+                f"🛑 *Stop Loss:* ₹`{mcx_sl:.2f}`"
             )
             send_telegram(msg)
 
         elif bearish and not is_duplicate(name, "SELL"):
-            sl = close + sl_distance
-            tp = close - tp_distance
             msg = (
-                "🔴 *COMMODITY SELL SIGNAL*\n"
+                "🔴 *MCX COMMODITY SELL SIGNAL*\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"🛢️ *Asset:* `{name}`\n"
-                f"💰 *Entry:* `{close:.2f}`\n"
-                f"📊 *VWAP:* `{vwap:.2f}` (Below) 🔻\n"
+                f"💰 *Entry:* ₹`{mcx_close:.2f}`\n"
+                f"📊 *VWAP:* ₹`{mcx_vwap:.2f}` (Below) 🔻\n"
                 f"📉 *RSI:* `{rsi:.2f}`\n"
                 f"⚡ *Supertrend:* BEARISH 🔻\n\n"
-                f"🎯 *Target (1:2):* `{tp:.2f}`\n"
-                f"🛑 *Stop Loss:* `{sl:.2f}`"
+                f"🎯 *Target (1:2):* ₹`{mcx_tp:.2f}`\n"
+                f"🛑 *Stop Loss:* ₹`{mcx_sl:.2f}`"
             )
             send_telegram(msg)
 
@@ -261,7 +280,7 @@ def analyze_commodity(ticker, name, session):
 
 def main():
     now = datetime.now(IST)
-    print(f"--- Commodity Scan Start [{now.strftime('%Y-%m-%d %H:%M:%S')}] ---")
+    print(f"--- MCX Commodity Scan Start [{now.strftime('%Y-%m-%d %H:%M:%S')}] ---")
     session = requests.Session()
     session.headers.update(
         {
@@ -269,8 +288,10 @@ def main():
         }
     )
 
-    for ticker, name in COMMODITIES.items():
-        analyze_commodity(ticker, name, session)
+    usdinr = get_usdinr_rate(session)
+
+    for ticker, info in COMMODITIES.items():
+        analyze_commodity(ticker, info, session, usdinr)
         time.sleep(1)
 
 
