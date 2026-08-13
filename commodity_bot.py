@@ -57,24 +57,28 @@ def run_commodity_bot():
             if not signal:
                 continue
 
-            # Correct USD to MCX INR Conversion & Strike Logic
+            # USD to MCX Conversion Logic
             if name == "CRUDEOIL":
                 close_inr = close_15m_usd * 86.5
                 strike = int(round(close_inr / 50) * 50)
                 expiry_opt = "17-AUG-26"
                 expiry_fut = "19-AUG-26"
+                # Estimated ATM Option Premium Price (~2% of underlying)
+                est_option_premium = close_inr * 0.022
             elif name == "NATURALGAS":
-                # Correct factor to match MCX price (~264 INR)
                 close_inr = close_15m_usd * 95.3
                 strike = int(round(close_inr / 5) * 5)
                 expiry_opt = "24-AUG-26"
                 expiry_fut = "26-AUG-26"
+                # Estimated ATM Option Premium Price (~3% of underlying)
+                est_option_premium = close_inr * 0.029
 
             option_type = "CE" if signal == "BUY" else "PE"
             emoji = "🟢" if signal == "BUY" else "🔴"
 
-            target_inr = close_inr * 1.012 if signal == "BUY" else close_inr * 0.988
-            sl_inr = close_inr * 0.994 if signal == "BUY" else close_inr * 1.006
+            # Targets and SL for Option Premium
+            opt_target = est_option_premium * 1.25  # 25% Profit Target on Option
+            opt_sl = est_option_premium * 0.85      # 15% Stoploss on Option
 
             search_fut = f"{name} {expiry_fut}"
             search_opt = f"{name} {expiry_opt} {strike} {option_type}"
@@ -86,13 +90,13 @@ def run_commodity_bot():
 ⏱️ <b>Trigger:</b> 15-Min VWAP Aligned
 🏷️ <b>Category:</b> <b>INTRADAY / MCX POSITIONAL</b>
 ━━━━━━━━━━━━━━━━━━
-📌 <b>Asset:</b> {name}
-🔍 <b>Angel One Search:</b> <code>{search_fut}</code>
-💡 <b>Option Buyers:</b> <code>{search_opt}</code>
+📌 <b>Asset:</b> {name} (Spot: ₹{close_inr:.2f})
+🔍 <b>Angel One Search:</b> <code>{search_opt}</code>
 ━━━━━━━━━━━━━━━━━━
-💰 <b>Entry:</b> ₹{close_inr:.2f}
-🎯 <b>Target:</b> ₹{target_inr:.2f}
-🛑 <b>Stop Loss:</b> ₹{sl_inr:.2f}
+💡 <b>OPTION TRADE DETAILS:</b>
+💰 <b>Option Buy Range:</b> ₹{est_option_premium:.2f}
+🎯 <b>Option Target:</b> ₹{opt_target:.2f}
+🛑 <b>Option Stop Loss:</b> ₹{opt_sl:.2f}
 ━━━━━━━━━━━━━━━━━━
 🛡️ <i>Daily Trend matched. Paper trade first.</i>
 """
