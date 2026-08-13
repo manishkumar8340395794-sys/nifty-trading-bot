@@ -9,18 +9,103 @@ from datetime import datetime
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 
-# Tickers with Sector & Asset Details
+# Comprehensive Stock List Across Major Indices & Sectors
 SYMBOLS = {
+    # INDICES
     "NIFTY 50": {"ticker": "^NSEI", "sector": "Index", "type": "INDEX"},
     "BANK NIFTY": {"ticker": "^NSEBANK", "sector": "Banking Index", "type": "INDEX"},
-    "NTPC": {"ticker": "NTPC.NS", "sector": "Power / Energy", "type": "EQUITY STOCK"},
-    "RELIANCE": {"ticker": "RELIANCE.NS", "sector": "Oil & Gas / Telecom", "type": "EQUITY STOCK"},
-    "TATASTEEL": {"ticker": "TATASTEEL.NS", "sector": "Metals & Mining", "type": "EQUITY STOCK"},
+    "SENSEX": {"ticker": "^BSESN", "sector": "Benchmark Index", "type": "INDEX"},
+    "NIFTY IT": {"ticker": "^CNXIT", "sector": "IT Index", "type": "INDEX"},
+
+    # BANKING & FINANCIALS (Nifty Bank / Sensex / Nifty 50)
+    "HDFCBANK": {"ticker": "HDFCBANK.NS", "sector": "Private Banking", "type": "EQUITY STOCK"},
+    "ICICIBANK": {"ticker": "ICICIBANK.NS", "sector": "Private Banking", "type": "EQUITY STOCK"},
+    "SBIN": {"ticker": "SBIN.NS", "sector": "PSU Banking", "type": "EQUITY STOCK"},
+    "KOTAKBANK": {"ticker": "KOTAKBANK.NS", "sector": "Private Banking", "type": "EQUITY STOCK"},
+    "AXISBANK": {"ticker": "AXISBANK.NS", "sector": "Private Banking", "type": "EQUITY STOCK"},
+    "INDUSINDBK": {"ticker": "INDUSINDBK.NS", "sector": "Private Banking", "type": "EQUITY STOCK"},
+    "BANKBARODA": {"ticker": "BANKBARODA.NS", "sector": "PSU Banking", "type": "EQUITY STOCK"},
+    "PNB": {"ticker": "PNB.NS", "sector": "PSU Banking", "type": "EQUITY STOCK"},
+    "IDFCFIRSTB": {"ticker": "IDFCFIRSTB.NS", "sector": "Private Banking", "type": "EQUITY STOCK"},
+    "AUBANK": {"ticker": "AUBANK.NS", "sector": "Private Banking", "type": "EQUITY STOCK"},
+    "FEDERALBNK": {"ticker": "FEDERALBNK.NS", "sector": "Private Banking", "type": "EQUITY STOCK"},
+    "BANDHANBNK": {"ticker": "BANDHANBNK.NS", "sector": "Private Banking", "type": "EQUITY STOCK"},
+    "BAJFINANCE": {"ticker": "BAJFINANCE.NS", "sector": "NBFC / Finance", "type": "EQUITY STOCK"},
+    "BAJAJFINSV": {"ticker": "BAJAJFINSV.NS", "sector": "Financial Services", "type": "EQUITY STOCK"},
+    "SHRIRAMFIN": {"ticker": "SHRIRAMFIN.NS", "sector": "NBFC / Finance", "type": "EQUITY STOCK"},
+    "JIOFIN": {"ticker": "JIOFIN.NS", "sector": "Financial Services", "type": "EQUITY STOCK"},
+
+    # IT SECTOR (Nifty IT)
+    "TCS": {"ticker": "TCS.NS", "sector": "IT Services", "type": "EQUITY STOCK"},
+    "INFY": {"ticker": "INFY.NS", "sector": "IT Services", "type": "EQUITY STOCK"},
+    "HCLTECH": {"ticker": "HCLTECH.NS", "sector": "IT Services", "type": "EQUITY STOCK"},
+    "WIPRO": {"ticker": "WIPRO.NS", "sector": "IT Services", "type": "EQUITY STOCK"},
+    "LTIM": {"ticker": "LTIM.NS", "sector": "IT Services", "type": "EQUITY STOCK"},
+    "TECHM": {"ticker": "TECHM.NS", "sector": "IT Services", "type": "EQUITY STOCK"},
+    "COFORGE": {"ticker": "COFORGE.NS", "sector": "IT Services", "type": "EQUITY STOCK"},
+    "MPHASIS": {"ticker": "MPHASIS.NS", "sector": "IT Services", "type": "EQUITY STOCK"},
+    "PERSISTENT": {"ticker": "PERSISTENT.NS", "sector": "IT Services", "type": "EQUITY STOCK"},
+
+    # AUTOMOBILE (Tata Motors + Auto Sector)
     "TATAMOTORS": {"ticker": "TATAMOTORS.NS", "sector": "Automobile", "type": "EQUITY STOCK"},
-    "SBIN": {"ticker": "SBIN.NS", "sector": "Public Sector Banking", "type": "EQUITY STOCK"},
-    "GOLD": {"ticker": "GC=F", "sector": "Precious Metals", "type": "COMMODITY"},
-    "SILVER": {"ticker": "SI=F", "sector": "Precious Metals", "type": "COMMODITY"},
-    "CRUDEOIL": {"ticker": "CL=F", "sector": "Energy Commodity", "type": "COMMODITY"}
+    "M&M": {"ticker": "M&M.NS", "sector": "Automobile", "type": "EQUITY STOCK"},
+    "MARUTI": {"ticker": "MARUTI.NS", "sector": "Automobile", "type": "EQUITY STOCK"},
+    "HEROMOTOCO": {"ticker": "HEROMOTOCO.NS", "sector": "Automobile", "type": "EQUITY STOCK"},
+    "EICHERMOT": {"ticker": "EICHERMOT.NS", "sector": "Automobile", "type": "EQUITY STOCK"},
+    "BAJAJ-AUTO": {"ticker": "BAJAJ-AUTO.NS", "sector": "Automobile", "type": "EQUITY STOCK"},
+    "BHARATFORG": {"ticker": "BHARATFORG.NS", "sector": "Auto Ancillaries", "type": "EQUITY STOCK"},
+    "TIINDIA": {"ticker": "TIINDIA.NS", "sector": "Auto Ancillaries", "type": "EQUITY STOCK"},
+
+    # CHEMICALS SECTOR
+    "PIDILITIND": {"ticker": "PIDILITIND.NS", "sector": "Specialty Chemicals", "type": "EQUITY STOCK"},
+    "SRF": {"ticker": "SRF.NS", "sector": "Specialty Chemicals", "type": "EQUITY STOCK"},
+    "AARTIIND": {"ticker": "AARTIIND.NS", "sector": "Specialty Chemicals", "type": "EQUITY STOCK"},
+    "DEEPAKNTR": {"ticker": "DEEPAKNTR.NS", "sector": "Chemicals", "type": "EQUITY STOCK"},
+    "ATUL": {"ticker": "ATUL.NS", "sector": "Chemicals", "type": "EQUITY STOCK"},
+    "PIIND": {"ticker": "PIIND.NS", "sector": "Agro Chemical", "type": "EQUITY STOCK"},
+    "UPL": {"ticker": "UPL.NS", "sector": "Agro Chemical", "type": "EQUITY STOCK"},
+    "SOLARINDS": {"ticker": "SOLARINDS.NS", "sector": "Chemicals & Explosives", "type": "EQUITY STOCK"},
+    "LINDEINDIA": {"ticker": "LINDEINDIA.NS", "sector": "Industrial Gases & Chemicals", "type": "EQUITY STOCK"},
+    "NAVINFLUOR": {"ticker": "NAVINFLUOR.NS", "sector": "Specialty Chemicals", "type": "EQUITY STOCK"},
+    "CLEAN": {"ticker": "CLEAN.NS", "sector": "Specialty Chemicals", "type": "EQUITY STOCK"},
+
+    # OIL, GAS, ENERGY & POWER
+    "RELIANCE": {"ticker": "RELIANCE.NS", "sector": "Oil & Gas / Telecom", "type": "EQUITY STOCK"},
+    "NTPC": {"ticker": "NTPC.NS", "sector": "Power / Energy", "type": "EQUITY STOCK"},
+    "POWERGRID": {"ticker": "POWERGRID.NS", "sector": "Power Transmission", "type": "EQUITY STOCK"},
+    "BPCL": {"ticker": "BPCL.NS", "sector": "Oil Marketing", "type": "EQUITY STOCK"},
+    "ONGC": {"ticker": "ONGC.NS", "sector": "Oil Exploration", "type": "EQUITY STOCK"},
+    "COALINDIA": {"ticker": "COALINDIA.NS", "sector": "Mining & Minerals", "type": "EQUITY STOCK"},
+    "ADANIENT": {"ticker": "ADANIENT.NS", "sector": "Conglomerate", "type": "EQUITY STOCK"},
+    "ADANIPORTS": {"ticker": "ADANIPORTS.NS", "sector": "Ports & Infra", "type": "EQUITY STOCK"},
+
+    # METALS & MINING
+    "TATASTEEL": {"ticker": "TATASTEEL.NS", "sector": "Metals & Mining", "type": "EQUITY STOCK"},
+    "HINDALCO": {"ticker": "HINDALCO.NS", "sector": "Metals & Aluminium", "type": "EQUITY STOCK"},
+    "JSWSTEEL": {"ticker": "JSWSTEEL.NS", "sector": "Metals & Mining", "type": "EQUITY STOCK"},
+
+    # CONSUMER GOODS, FMCG & RETAIL
+    "HINDUNILVR": {"ticker": "HINDUNILVR.NS", "sector": "FMCG", "type": "EQUITY STOCK"},
+    "ITC": {"ticker": "ITC.NS", "sector": "FMCG / Diversified", "type": "EQUITY STOCK"},
+    "NESTLEIND": {"ticker": "NESTLEIND.NS", "sector": "FMCG / Foods", "type": "EQUITY STOCK"},
+    "BRITANNIA": {"ticker": "BRITANNIA.NS", "sector": "FMCG / Foods", "type": "EQUITY STOCK"},
+    "TATACONSUM": {"ticker": "TATACONSUM.NS", "sector": "FMCG / Beverages", "type": "EQUITY STOCK"},
+    "TITAN": {"ticker": "TITAN.NS", "sector": "Consumer Durables / Retail", "type": "EQUITY STOCK"},
+    "TRENT": {"ticker": "TRENT.NS", "sector": "Retail", "type": "EQUITY STOCK"},
+    "ASIANPAINT": {"ticker": "ASIANPAINT.NS", "sector": "Consumer Paints", "type": "EQUITY STOCK"},
+
+    # PHARMA & HEALTHCARE
+    "SUNPHARMA": {"ticker": "SUNPHARMA.NS", "sector": "Pharmaceuticals", "type": "EQUITY STOCK"},
+    "CIPLA": {"ticker": "CIPLA.NS", "sector": "Pharmaceuticals", "type": "EQUITY STOCK"},
+    "DRREDDY": {"ticker": "DRREDDY.NS", "sector": "Pharmaceuticals", "type": "EQUITY STOCK"},
+    "DIVISLAB": {"ticker": "DIVISLAB.NS", "sector": "Pharmaceuticals", "type": "EQUITY STOCK"},
+    "APOLLOHOSP": {"ticker": "APOLLOHOSP.NS", "sector": "Healthcare / Hospitals", "type": "EQUITY STOCK"},
+
+    # INFRASTRUCTURE & CEMENT
+    "LT": {"ticker": "LT.NS", "sector": "Engineering & Construction", "type": "EQUITY STOCK"},
+    "ULTRACEMCO": {"ticker": "ULTRACEMCO.NS", "sector": "Cement", "type": "EQUITY STOCK"},
+    "GRASIM": {"ticker": "GRASIM.NS", "sector": "Cement / Chemicals", "type": "EQUITY STOCK"},
+    "BEL": {"ticker": "BEL.NS", "sector": "Aerospace & Defence", "type": "EQUITY STOCK"}
 }
 
 # Trade state tracker
@@ -93,7 +178,6 @@ def calculate_adx(df, length=14):
 
 def analyze():
     global trade_state
-    
     current_time_str = datetime.now().strftime("%d-%b-%Y %I:%M %p")
     
     for name, info in SYMBOLS.items():
@@ -102,6 +186,7 @@ def analyze():
             sector = info["sector"]
             asset_type = info["type"]
             
+            # Silent Error Handling: If download fails, skip safely
             data = yf.download(ticker, period="5d", interval="15m", progress=False)
             if data.empty or len(data) < 50:
                 continue
@@ -119,8 +204,6 @@ def analyze():
             atr = float(curr['ATR'])
             
             state = trade_state[name]
-            
-            # Trade Style Logic: ADX > 30 is strong Momentum (Intraday), ADX 20-30 is Swing
             trade_style = "INTRADAY" if curr['ADX'] >= 25 else "SWING TRADE"
 
             # 1. Target / Exit Check
@@ -144,7 +227,7 @@ def analyze():
                     trade_state[name] = {'status': 'NONE', 'entry': 0, 'sl': 0, 'target': 0}
                     continue
 
-            # 2. Strict Entry Filters
+            # 2. Entry Conditions (Supertrend + ADX > 20 + EMA 200)
             strong_trend = curr['ADX'] > 20
             
             buy_signal = (
@@ -157,7 +240,7 @@ def analyze():
                 current_price < curr['EMA200'] and strong_trend
             )
             
-            # 3. Message Execution
+            # 3. Execution
             if state['status'] == 'NONE':
                 if buy_signal:
                     sl = current_price - (1.8 * atr)
@@ -200,7 +283,7 @@ def analyze():
                     send_telegram(msg)
 
         except Exception as e:
-            print(f"Error: {e}")
+            continue
 
 if __name__ == "__main__":
     analyze()
