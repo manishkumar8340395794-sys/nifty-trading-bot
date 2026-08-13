@@ -62,7 +62,6 @@ def run_commodity_bot():
                 close_inr = close_15m_usd * 86.5
                 strike = int(round(close_inr / 50) * 50)
                 
-                # Expiry formats
                 exp_angel_opt = "17-AUG-26"
                 exp_angel_fut = "19-AUG-26"
                 exp_5p_opt = "17 AUG 2026"
@@ -73,7 +72,6 @@ def run_commodity_bot():
                 close_inr = close_15m_usd * 95.3
                 strike = int(round(close_inr / 5) * 5)
                 
-                # Expiry formats
                 exp_angel_opt = "24-AUG-26"
                 exp_angel_fut = "26-AUG-26"
                 exp_5p_opt = "24 AUG 2026"
@@ -84,14 +82,15 @@ def run_commodity_bot():
             option_type = "CE" if signal == "BUY" else "PE"
             emoji = "🟢" if signal == "BUY" else "🔴"
 
-            # Targets and SL for Option Premium
+            # Target & Stop Loss Calculation
             opt_target = est_option_premium * 1.25
             opt_sl = est_option_premium * 0.85
 
-            # Search Formats
+            # Formats for Angel One
             search_angel_opt = f"{name} {exp_angel_opt} {strike} {option_type}"
             search_angel_fut = f"{name} {exp_angel_fut}"
-            
+
+            # Formats for 5paisa
             search_5p_opt = f"{name} {exp_5p_opt} {strike} {option_type}"
             search_5p_fut = f"{name} {exp_5p_fut} FUT"
 
@@ -102,18 +101,19 @@ def run_commodity_bot():
 ⏱️ <b>Trigger:</b> 15-Min VWAP Aligned
 📌 <b>MCX Spot Price:</b> ₹{close_inr:.2f}
 ━━━━━━━━━━━━━━━━━━
-📱 <b>ANGEL ONE SEARCH:</b>
-• <b>Option:</b> <code>{search_angel_opt}</code>
-• <b>Future:</b> <code>{search_angel_fut}</code>
-
-📱 <b>5PAISA SEARCH:</b>
-• <b>Option:</b> <code>{search_5p_opt}</code>
-• <b>Future:</b> <code>{search_5p_fut}</code>
+📱 <b>ANGEL ONE DETAILS:</b>
+• <b>Option Search:</b> <code>{search_angel_opt}</code>
+• <b>Future Search:</b> <code>{search_angel_fut}</code>
+• <b>Buy Price:</b> ₹{est_option_premium:.2f}
+• <b>Target:</b> ₹{opt_target:.2f}
+• <b>Stop Loss:</b> ₹{opt_sl:.2f}
 ━━━━━━━━━━━━━━━━━━
-💡 <b>OPTION LEVEL DETAILS:</b>
-💰 <b>Buy Price:</b> ₹{est_option_premium:.2f}
-🎯 <b>Target:</b> ₹{opt_target:.2f}
-🛑 <b>Stop Loss:</b> ₹{opt_sl:.2f}
+📱 <b>5PAISA DETAILS:</b>
+• <b>Option Search:</b> <code>{search_5p_opt}</code>
+• <b>Future Search:</b> <code>{search_5p_fut}</code>
+• <b>Buy Price:</b> ₹{est_option_premium:.2f}
+• <b>Target:</b> ₹{opt_target:.2f}
+• <b>Stop Loss:</b> ₹{opt_sl:.2f}
 ━━━━━━━━━━━━━━━━━━
 🛡️ <i>Daily Trend matched. Paper trade first.</i>
 """
