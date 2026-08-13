@@ -3,17 +3,24 @@ import requests
 import yfinance as yf
 import pandas as pd
 import numpy as np
+from datetime import datetime
 
 # Telegram Configurations
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 
+# Tickers with Sector & Asset Details
 SYMBOLS = {
-    "NIFTY 50": "^NSEI",
-    "BANK NIFTY": "^NSEBANK",
-    "SENSEX": "^BSESN",
-    "NIFTY IT": "^CNXIT",
-    "NTPC": "NTPC.NS"
+    "NIFTY 50": {"ticker": "^NSEI", "sector": "Index", "type": "INDEX"},
+    "BANK NIFTY": {"ticker": "^NSEBANK", "sector": "Banking Index", "type": "INDEX"},
+    "NTPC": {"ticker": "NTPC.NS", "sector": "Power / Energy", "type": "EQUITY STOCK"},
+    "RELIANCE": {"ticker": "RELIANCE.NS", "sector": "Oil & Gas / Telecom", "type": "EQUITY STOCK"},
+    "TATASTEEL": {"ticker": "TATASTEEL.NS", "sector": "Metals & Mining", "type": "EQUITY STOCK"},
+    "TATAMOTORS": {"ticker": "TATAMOTORS.NS", "sector": "Automobile", "type": "EQUITY STOCK"},
+    "SBIN": {"ticker": "SBIN.NS", "sector": "Public Sector Banking", "type": "EQUITY STOCK"},
+    "GOLD": {"ticker": "GC=F", "sector": "Precious Metals", "type": "COMMODITY"},
+    "SILVER": {"ticker": "SI=F", "sector": "Precious Metals", "type": "COMMODITY"},
+    "CRUDEOIL": {"ticker": "CL=F", "sector": "Energy Commodity", "type": "COMMODITY"}
 }
 
 # Trade state tracker
@@ -32,7 +39,6 @@ def calculate_supertrend(df, period=10, multiplier=3):
     low = df['Low']
     close = df['Close']
     
-    # ATR calculation
     price_diff1 = high - low
     price_diff2 = abs(high - close.shift())
     price_diff3 = abs(low - close.shift())
@@ -88,8 +94,14 @@ def calculate_adx(df, length=14):
 def analyze():
     global trade_state
     
-    for name, ticker in SYMBOLS.items():
+    current_time_str = datetime.now().strftime("%d-%b-%Y %I:%M %p")
+    
+    for name, info in SYMBOLS.items():
         try:
+            ticker = info["ticker"]
+            sector = info["sector"]
+            asset_type = info["type"]
+            
             data = yf.download(ticker, period="5d", interval="15m", progress=False)
             if data.empty or len(data) < 50:
                 continue
@@ -108,28 +120,31 @@ def analyze():
             
             state = trade_state[name]
             
-            # 1. Exit Tracking
+            # Trade Style Logic: ADX > 30 is strong Momentum (Intraday), ADX 20-30 is Swing
+            trade_style = "INTRADAY" if curr['ADX'] >= 25 else "SWING TRADE"
+
+            # 1. Target / Exit Check
             if state['status'] == 'BUY':
                 if current_price >= state['target']:
-                    send_telegram(f"🎯 *TARGET HIT - {name}*\n\n💰 Exit: ₹{current_price:.2f}\n🎉 Profit Booked!")
+                    send_telegram(f"🎯 *TARGET HIT - {name}*\n\n📅 *Date & Time:* {current_time_str}\n🏷 *Category:* {asset_type}\n🏭 *Sector:* {sector}\n💰 *Exit Price:* ₹{current_price:.2f}\n🎉 *Profit Booked!*")
                     trade_state[name] = {'status': 'NONE', 'entry': 0, 'sl': 0, 'target': 0}
                     continue
                 elif current_price <= state['sl']:
-                    send_telegram(f"❌ *STOP LOSS HIT - {name}*\n\n🔻 Exit: ₹{current_price:.2f}")
+                    send_telegram(f"❌ *STOP LOSS HIT - {name}*\n\n📅 *Date & Time:* {current_time_str}\n🏷 *Category:* {asset_type}\n🏭 *Sector:* {sector}\n🔻 *Exit Price:* ₹{current_price:.2f}")
                     trade_state[name] = {'status': 'NONE', 'entry': 0, 'sl': 0, 'target': 0}
                     continue
 
             elif state['status'] == 'SELL':
                 if current_price <= state['target']:
-                    send_telegram(f"🎯 *TARGET HIT - {name}*\n\n💰 Exit: ₹{current_price:.2f}\n🎉 Profit Booked!")
+                    send_telegram(f"🎯 *TARGET HIT - {name}*\n\n📅 *Date & Time:* {current_time_str}\n🏷 *Category:* {asset_type}\n🏭 *Sector:* {sector}\n💰 *Exit Price:* ₹{current_price:.2f}\n🎉 *Profit Booked!*")
                     trade_state[name] = {'status': 'NONE', 'entry': 0, 'sl': 0, 'target': 0}
                     continue
                 elif current_price >= state['sl']:
-                    send_telegram(f"❌ *STOP LOSS HIT - {name}*\n\n🔺 Exit: ₹{current_price:.2f}")
+                    send_telegram(f"❌ *STOP LOSS HIT - {name}*\n\n📅 *Date & Time:* {current_time_str}\n🏷 *Category:* {asset_type}\n🏭 *Sector:* {sector}\n🔺 *Exit Price:* ₹{current_price:.2f}")
                     trade_state[name] = {'status': 'NONE', 'entry': 0, 'sl': 0, 'target': 0}
                     continue
 
-            # 2. Strict Entry Conditions (Supertrend + ADX > 20 + EMA 200)
+            # 2. Strict Entry Filters
             strong_trend = curr['ADX'] > 20
             
             buy_signal = (
@@ -142,19 +157,26 @@ def analyze():
                 current_price < curr['EMA200'] and strong_trend
             )
             
-            # 3. Execution
+            # 3. Message Execution
             if state['status'] == 'NONE':
                 if buy_signal:
                     sl = current_price - (1.8 * atr)
-                    target = current_price + (3.6 * atr)  # 1:2 R:R Ratio
+                    target = current_price + (3.6 * atr)
                     
                     trade_state[name] = {'status': 'BUY', 'entry': current_price, 'sl': sl, 'target': target}
                     
-                    msg = (f"🟢 *HIGH ACCURACY BUY - {name}*\n\n"
-                           f"📌 *Entry:* ₹{current_price:.2f}\n"
-                           f"🎯 *Target:* ₹{target:.2f}\n"
+                    msg = (f"🟢 *HIGH ACCURACY BUY ALERT*\n"
+                           f"━━━━━━━━━━━━━━━━━━\n"
+                           f"📌 *Asset:* {name}\n"
+                           f"📅 *Date & Time:* {current_time_str}\n"
+                           f"⏱ *Trade Type:* {trade_style}\n"
+                           f"🏷 *Category:* {asset_type}\n"
+                           f"🏭 *Sector:* {sector}\n"
+                           f"━━━━━━━━━━━━━━━━━━\n"
+                           f"🎯 *Entry:* ₹{current_price:.2f}\n"
+                           f"🚀 *Target:* ₹{target:.2f}\n"
                            f"🛑 *Stop Loss:* ₹{sl:.2f}\n"
-                           f"📊 *ADX Trend Strength:* {curr['ADX']:.1f} (Strong)")
+                           f"📊 *ADX Trend:* {curr['ADX']:.1f} (Strong)")
                     send_telegram(msg)
                     
                 elif sell_signal:
@@ -163,11 +185,18 @@ def analyze():
                     
                     trade_state[name] = {'status': 'SELL', 'entry': current_price, 'sl': sl, 'target': target}
                     
-                    msg = (f"🔴 *HIGH ACCURACY SELL - {name}*\n\n"
-                           f"📌 *Entry:* ₹{current_price:.2f}\n"
-                           f"🎯 *Target:* ₹{target:.2f}\n"
+                    msg = (f"🔴 *HIGH ACCURACY SELL ALERT*\n"
+                           f"━━━━━━━━━━━━━━━━━━\n"
+                           f"📌 *Asset:* {name}\n"
+                           f"📅 *Date & Time:* {current_time_str}\n"
+                           f"⏱ *Trade Type:* {trade_style}\n"
+                           f"🏷 *Category:* {asset_type}\n"
+                           f"🏭 *Sector:* {sector}\n"
+                           f"━━━━━━━━━━━━━━━━━━\n"
+                           f"🎯 *Entry:* ₹{current_price:.2f}\n"
+                           f"🚀 *Target:* ₹{target:.2f}\n"
                            f"🛑 *Stop Loss:* ₹{sl:.2f}\n"
-                           f"📊 *ADX Trend Strength:* {curr['ADX']:.1f} (Strong)")
+                           f"📊 *ADX Trend:* {curr['ADX']:.1f} (Strong)")
                     send_telegram(msg)
 
         except Exception as e:
