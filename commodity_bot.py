@@ -1,7 +1,6 @@
 import os
 import requests
 import yfinance as yf
-import pandas as pd
 from datetime import datetime
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -17,78 +16,85 @@ def send_telegram_message(message):
     except Exception as e:
         print(f"Error sending message: {e}")
 
-def get_mcx_expiry_format():
-    now = datetime.now()
-    months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
-    return f"{months[now.month - 1]}{now.strftime('%y')}"
-
 def run_commodity_bot():
     commodities = {
         "CRUDEOIL": "CL=F",
-        "NATURALGAS": "NG=F",
-        "GOLD": "GC=F",
-        "SILVER": "SI=F"
+        "NATURALGAS": "NG=F"
     }
     
-    expiry = get_mcx_expiry_format()
+    # Approx USD to INR Exchange Rate for MCX Conversion
+    USD_TO_INR = 86.5 
 
     for name, ticker in commodities.items():
         try:
-            # 1. Daily Trend Calculation
+            # 1. Fetch Daily Data (1D) for Overall Trend
             df_daily = yf.download(ticker, period="30d", interval="1d", progress=False)
             if df_daily.empty:
                 continue
                 
-            daily_close = df_daily['Close'].iloc[-1].item() if hasattr(df_daily['Close'].iloc[-1], 'item') else float(df_daily['Close'].iloc[-1])
-            daily_sma20 = df_daily['Close'].rolling(20).mean().iloc[-1].item() if hasattr(df_daily['Close'].rolling(20).mean().iloc[-1], 'item') else float(df_daily['Close'].rolling(20).mean().iloc[-1])
+            daily_close = float(df_daily['Close'].iloc[-1].item() if hasattr(df_daily['Close'].iloc[-1], 'item') else df_daily['Close'].iloc[-1])
+            daily_sma20 = float(df_daily['Close'].rolling(20).mean().iloc[-1].item() if hasattr(df_daily['Close'].rolling(20).mean().iloc[-1], 'item') else df_daily['Close'].rolling(20).mean().iloc[-1])
             
             macro_trend = "BULLISH" if daily_close > daily_sma20 else "BEARISH"
 
-            # 2. 15-Minute Entry Calculation
+            # 2. Fetch 15-Minute Data
             df_15m = yf.download(ticker, period="5d", interval="15m", progress=False)
             if df_15m.empty:
                 continue
                 
-            close_15m = df_15m['Close'].iloc[-1].item() if hasattr(df_15m['Close'].iloc[-1], 'item') else float(df_15m['Close'].iloc[-1])
+            close_15m_usd = float(df_15m['Close'].iloc[-1].item() if hasattr(df_15m['Close'].iloc[-1], 'item') else df_15m['Close'].iloc[-1])
             
             vol = df_15m['Volume']
             high = df_15m['High']
             low = df_15m['Low']
             close = df_15m['Close']
-            vwap = ((vol * (high + low + close) / 3).sum() / vol.sum())
-            vwap = vwap.item() if hasattr(vwap, 'item') else float(vwap)
+            vwap_usd = float(((vol * (high + low + close) / 3).sum() / vol.sum()).item() if hasattr(((vol * (high + low + close) / 3).sum() / vol.sum()), 'item') else ((vol * (high + low + close) / 3).sum() / vol.sum()))
 
-            # 3. Signal Filtering
+            # Signal Logic
             signal = None
-            if macro_trend == "BULLISH" and close_15m > vwap:
+            if macro_trend == "BULLISH" and close_15m_usd > vwap_usd:
                 signal = "BUY"
-            elif macro_trend == "BEARISH" and close_15m < vwap:
+            elif macro_trend == "BEARISH" and close_15m_usd < vwap_usd:
                 signal = "SELL"
 
             if not signal:
                 continue
 
-            emoji = "🟢" if signal == "BUY" else "🔴"
-            strike = round(close_15m / 50) * 50
-            option_type = "CE" if signal == "BUY" else "PE"
+            # Convert USD Price to INR MCX Equivalent
+            if name == "CRUDEOIL":
+                close_inr = close_15m_usd * USD_TO_INR
+                strike = int(round(close_inr / 50) * 50)
+                expiry_opt = "17AUG26"
+                expiry_fut = "19AUG26"
+            elif name == "NATURALGAS":
+                close_inr = close_15m_usd * (USD_TO_INR / 26) # Adjusted factor for NatGas MCX Lot
+                strike = int(round(close_inr))
+                expiry_opt = "24AUG26"
+                expiry_fut = "26AUG26"
 
-            target = close_15m * 1.012 if signal == "BUY" else close_15m * 0.988
-            sl = close_15m * 0.994 if signal == "BUY" else close_15m * 1.006
+            option_type = "CE" if signal == "BUY" else "PE"
+            emoji = "🟢" if signal == "BUY" else "🔴"
+
+            target_inr = close_inr * 1.012 if signal == "BUY" else close_inr * 0.988
+            sl_inr = close_inr * 0.994 if signal == "BUY" else close_inr * 1.006
+
+            search_fut = f"{name} {expiry_fut} FUT"
+            search_opt = f"{name} {expiry_opt} {strike} {option_type}"
 
             msg = f"""
 {emoji} <b>MCX COMMODITY {signal} SIGNAL</b>
 ━━━━━━━━━━━━━━━━━━
-📊 <b>Overall Day Trend:</b> {macro_trend}
+📊 <b>Overall Day Trend:</b> {macro_trend} 📈
 ⏱️ <b>Trigger:</b> 15-Min VWAP Aligned
 🏷️ <b>Category:</b> <b>INTRADAY / MCX POSITIONAL</b>
 ━━━━━━━━━━━━━━━━━━
 📌 <b>Asset:</b> {name}
-🔍 <b>Angel One Search:</b> <code>{name} {expiry} FUT</code>
-💡 <b>Option Buyers:</b> <code>{name} {strike} {option_type}</code>
+🔍 <b>Angel One Search:</b> <code>{search_fut}</code>
+💡 <b>Option Buyers:</b> <code>{search_opt}</code>
 ━━━━━━━━━━━━━━━━━━
-💰 <b>Entry:</b> ₹{close_15m:.2f}
-🎯 <b>Target:</b> ₹{target:.2f}
-🛑 <b>Stop Loss:</b> ₹{sl:.2f}
+💰 <b>Entry:</b> ₹{close_inr:.2f}
+🎯 <b>Target:</b> ₹{target_inr:.2f}
+🛑 <b>Stop Loss:</b> ₹{sl_inr:.2f}
 ━━━━━━━━━━━━━━━━━━
 🛡️ <i>Daily Trend matched. Paper trade first.</i>
 """
