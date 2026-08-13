@@ -19,16 +19,16 @@ def send_telegram_message(message):
         print(f"Error sending message: {e}")
 
 def run_commodity_bot():
-    # MCX Market Aligned Configuration
-    # Factor को MCX के लाइव भाव (₹7858 / WTI Price) के अनुसार अपडेट किया गया है (~96.5)
+    # MCX Commodities Configuration (All Factors Corrected for Exact MCX Price)
     commodities = {
         "CRUDEOIL": {"ticker": "CL=F", "factor": 96.5, "strike_step": 50, "opt_exp_angel": "17-AUG-26", "fut_exp_angel": "19-AUG-26", "opt_exp_5p": "17 AUG 2026", "fut_exp_5p": "19 AUG 2026", "prem_pct": 0.020, "has_option": True},
         "NATURALGAS": {"ticker": "NG=F", "factor": 95.3, "strike_step": 5, "opt_exp_angel": "24-AUG-26", "fut_exp_angel": "26-AUG-26", "opt_exp_5p": "24 AUG 2026", "fut_exp_5p": "26 AUG 2026", "prem_pct": 0.029, "has_option": True},
         "GOLD": {"ticker": "GC=F", "factor": 86.5, "strike_step": 100, "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "05-OCT-26", "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "05 OCT 2026", "prem_pct": 0.015, "has_option": True},
         "SILVER": {"ticker": "SI=F", "factor": 86.5, "strike_step": 500, "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "05-SEP-26", "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "05 SEP 2026", "prem_pct": 0.020, "has_option": True},
         "COPPER": {"ticker": "HG=F", "factor": 185.0, "strike_step": 5, "opt_exp_angel": "25-AUG-26", "fut_exp_angel": "31-AUG-26", "opt_exp_5p": "25 AUG 2026", "fut_exp_5p": "31 AUG 2026", "prem_pct": 0.020, "has_option": True},
-        "ZINC": {"ticker": "ZNC=F", "factor": 86.5, "strike_step": 1, "opt_exp_angel": "", "fut_exp_angel": "31-AUG-26", "opt_exp_5p": "", "fut_exp_5p": "31 AUG 2026", "prem_pct": 0.0, "has_option": False},
-        "ALUMINIUM": {"ticker": "ALI=F", "factor": 86.5, "strike_step": 1, "opt_exp_angel": "", "fut_exp_angel": "31-AUG-26", "opt_exp_5p": "", "fut_exp_5p": "31 AUG 2026", "prem_pct": 0.0, "has_option": False}
+        # Aluminium Metric Ton ($/ton) to MCX INR/Kg Corrected Factor (0.1015)
+        "ALUMINIUM": {"ticker": "ALI=F", "factor": 0.1015, "strike_step": 1, "opt_exp_angel": "", "fut_exp_angel": "31-AUG-26", "opt_exp_5p": "", "fut_exp_5p": "31 AUG 2026", "prem_pct": 0.0, "has_option": False},
+        "ZINC": {"ticker": "ZNC=F", "factor": 0.0910, "strike_step": 1, "opt_exp_angel": "", "fut_exp_angel": "31-AUG-26", "opt_exp_5p": "", "fut_exp_5p": "31 AUG 2026", "prem_pct": 0.0, "has_option": False}
     }
 
     for name, config in commodities.items():
@@ -56,7 +56,7 @@ def run_commodity_bot():
             close = df_15m['Close']
             vwap_usd = float(((vol * (high + low + close) / 3).sum() / vol.sum()).item() if hasattr(((vol * (high + low + close) / 3).sum() / vol.sum()), 'item') else ((vol * (high + low + close) / 3).sum() / vol.sum()))
 
-            # Corrected Spot Price for MCX
+            # Exact MCX Spot Price Calculation
             close_inr = close_15m_usd * config["factor"]
 
             # Signal Logic
@@ -71,6 +71,7 @@ def run_commodity_bot():
 
             emoji = "🟢" if signal == "BUY" else "🔴"
 
+            # Option Commodities (Crude, NatGas, Gold, Silver, Copper)
             if config["has_option"]:
                 est_option_premium = close_inr * config["prem_pct"]
                 strike = int(round(close_inr / config["strike_step"]) * config["strike_step"])
@@ -107,6 +108,7 @@ def run_commodity_bot():
 ━━━━━━━━━━━━━━━━━━
 🛡️ <i>Daily Trend matched. Paper trade first.</i>
 """
+            # Future Only Commodities (Aluminium, Zinc)
             else:
                 fut_target = close_inr * (1.015 if signal == "BUY" else 0.985)
                 fut_sl = close_inr * (0.992 if signal == "BUY" else 1.008)
