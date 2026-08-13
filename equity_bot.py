@@ -1,429 +1,173 @@
-from datetime import datetime
-import json
 import os
-import time
-
-import numpy as np
-import pandas as pd
-import pytz
 import requests
 import yfinance as yf
+import pandas as pd
+import numpy as np
 
-# ============================================================
-# CONFIG & ENVIRONMENT
-# ============================================================
+# Telegram Configurations
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
 
-IST = pytz.timezone("Asia/Kolkata")
+# Tickers to monitor (Nifty 50, Bank Nifty, Sensex, IT Sector)
+SYMBOLS = {
+    "NIFTY 50": "^NSEI",
+    "BANK NIFTY": "^NSEBANK",
+    "SENSEX": "^BSESN",
+    "NIFTY IT": "^CNXIT"
+}
 
-ALERT_COOLDOWN_MINUTES = 45
-CACHE_FILE = "sent_alerts.json"
-
-# Telegram Credentials (Environment Secrets + Fallback)
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-
-if not TELEGRAM_BOT_TOKEN:
-    TELEGRAM_BOT_TOKEN = "8303140788:AAHvS4sT5c1_5dOexKxN8Y025k3R8d26q60"
-
-if not TELEGRAM_CHAT_ID:
-    TELEGRAM_CHAT_ID = "5660614483"
-
-
-# ============================================================
-# TELEGRAM ALERT SYSTEM
-# ============================================================
+# Global dictionary to track active trade state
+# Format: {symbol: {'status': 'BUY'/'SELL'/'NONE', 'entry': price, 'sl': price, 'target': price}}
+trade_state = {symbol: {'status': 'NONE', 'entry': 0, 'sl': 0, 'target': 0} for symbol in SYMBOLS}
 
 def send_telegram(message):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("[TELEGRAM ERROR] Token or Chat ID missing.")
-        return False
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown",
-    }
-
-    try:
-        response = requests.post(url, json=payload, timeout=15)
-        response.raise_for_status()
-        result = response.json()
-        if result.get("ok"):
-            print("[TELEGRAM] Alert sent successfully.")
-            return True
-        print(f"[TELEGRAM ERROR] {result}")
-        return False
-    except Exception as e:
-        print(f"[TELEGRAM ERROR] {e}")
-        return False
-
-
-# ============================================================
-# DUPLICATE ALERT PROTECTION (JSON CACHE)
-# ============================================================
-
-def load_sent_alerts():
-    if os.path.exists(CACHE_FILE):
+    if TELEGRAM_TOKEN and CHAT_ID:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         try:
-            with open(CACHE_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
+            requests.post(url, json={"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"})
+        except Exception as e:
+            print(f"Telegram error: {e}")
 
-
-def save_sent_alerts(alerts):
-    try:
-        with open(CACHE_FILE, "w") as f:
-            json.dump(alerts, f)
-    except Exception as e:
-        print(f"[CACHE ERROR] Could not save cache: {e}")
-
-
-def is_duplicate_alert(symbol, alert_type):
-    key = f"{symbol}_{alert_type}"
-    now = time.time()
-    sent_alerts = load_sent_alerts()
-
-    if key in sent_alerts:
-        elapsed = now - sent_alerts[key]
-        if elapsed < (ALERT_COOLDOWN_MINUTES * 60):
-            return True
-
-    sent_alerts[key] = now
-    save_sent_alerts(sent_alerts)
-    return False
-
-
-# ============================================================
-# WATCHLIST (STOCKS, INDEXES, COMMODITIES)
-# ============================================================
-
-WATCHLIST = {
-    # NSE STOCKS
-    "PNB.NS": "PNB",
-    "GAIL.NS": "GAIL",
-    "IOC.NS": "IOC",
-    "FEDERALBNK.NS": "FEDERAL BANK",
-    "ASHOKLEY.NS": "ASHOK LEYLAND",
-    "BPCL.NS": "BPCL",
-    "NTPC.NS": "NTPC",
-    "PFC.NS": "PFC",
-    "BHEL.NS": "BHEL",
-    "SBIN.NS": "SBI",
-
-    # INDEXES
-    "^NSEI": "NIFTY 50",
-    "^NSEBANK": "BANK NIFTY",
-    "^CNXIT": "NIFTY IT",
-    "^BSESN": "SENSEX",
-
-    # COMMODITIES
-    "GC=F": "GOLD",
-    "SI=F": "SILVER",
-    "CL=F": "CRUDE OIL",
-    "NG=F": "NATURAL GAS",
-}
-
-INDEX_SYMBOLS = {
-    "^NSEI",
-    "^NSEBANK",
-    "^CNXIT",
-    "^BSESN",
-}
-
-
-# ============================================================
-# TECHNICAL INDICATORS
-# ============================================================
-
-def calculate_rsi(series, window=14):
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(alpha=1 / window, adjust=False, min_periods=window).mean()
-    avg_loss = loss.ewm(alpha=1 / window, adjust=False, min_periods=window).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    return 100 - (100 / (1 + rs))
-
-
-def calculate_atr(df, window=14):
-    high_low = df["High"] - df["Low"]
-    high_close = (df["High"] - df["Close"].shift()).abs()
-    low_close = (df["Low"] - df["Close"].shift()).abs()
-    true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    return true_range.ewm(alpha=1 / window, adjust=False, min_periods=window).mean()
-
-
-def calculate_vwap(df):
-    data = df.copy()
-    if data.index.tz is None:
-        data.index = data.index.tz_localize("UTC")
-    data.index = data.index.tz_convert(IST)
-
-    typical_price = (data["High"] + data["Low"] + data["Close"]) / 3
-    volume = data["Volume"].fillna(0)
-    session = data.index.date
-
-    cumulative_pv = (typical_price * volume).groupby(session).cumsum()
-    cumulative_volume = volume.groupby(session).cumsum()
-
-    return cumulative_pv / (cumulative_volume + 1e-9)
-
-
-# ============================================================
-# CANDLE PATTERN CONFIRMATION
-# ============================================================
-
-def bullish_candle(row):
-    candle_range = row["High"] - row["Low"]
-    if candle_range <= 0:
-        return False
-    body = abs(row["Close"] - row["Open"])
-    body_ratio = body / candle_range
-    close_position = (row["Close"] - row["Low"]) / candle_range
-    return row["Close"] > row["Open"] and body_ratio >= 0.50 and close_position >= 0.65
-
-
-def bearish_candle(row):
-    candle_range = row["High"] - row["Low"]
-    if candle_range <= 0:
-        return False
-    body = abs(row["Close"] - row["Open"])
-    body_ratio = body / candle_range
-    close_position = (row["High"] - row["Close"]) / candle_range
-    return row["Close"] < row["Open"] and body_ratio >= 0.50 and close_position >= 0.65
-
-
-# ============================================================
-# DATA CLEANING
-# ============================================================
-
-def clean_data(df):
-    if df.empty:
-        return pd.DataFrame()
-
-    df = df.copy()
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-
-    required = ["Open", "High", "Low", "Close", "Volume"]
-    if not all(column in df.columns for column in required):
-        return pd.DataFrame()
-
-    df = df[required]
-    df.dropna(subset=["Open", "High", "Low", "Close"], inplace=True)
+def calculate_indicators(df):
+    # EMA 20, 50, 200
+    df['EMA20'] = df['Close'].ewm(span=20, adjust=False).mean()
+    df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
+    df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
+    
+    # RSI (14)
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+    
+    # ATR for dynamic Stop-Loss and Target calculation
+    high_low = df['High'] - df['Low']
+    high_close = np.abs(df['High'] - df['Close'].shift())
+    low_close = np.abs(df['Low'] - df['Close'].shift())
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = np.max(ranges, axis=1)
+    df['ATR'] = true_range.rolling(14).mean()
+    
     return df
 
+def analyze_and_trade():
+    global trade_state
+    
+    for name, ticker in SYMBOLS.items():
+        try:
+            # Fetch 15-minute timeframe data
+            data = yf.download(ticker, period="5d", interval="15m", progress=False)
+            if data.empty or len(data) < 200:
+                continue
+            
+            # Fix multi-index columns if returned by yfinance
+            if isinstance(data.columns, pd.MultiIndex):
+                data.columns = data.columns.get_level_values(0)
+                
+            df = calculate_indicators(data)
+            
+            curr = df.iloc[-1]
+            prev = df.iloc[-2]
+            current_price = float(curr['Close'])
+            atr = float(curr['ATR'])
+            
+            state = trade_state[name]
+            
+            # --- 1. Check Active Trade for Target or Stop Loss ---
+            if state['status'] == 'BUY':
+                if current_price >= state['target']:
+                    send_telegram(f"🎯 *TARGET HIT - {name}*\n\n"
+                                  f"📈 Status: Target Completed\n"
+                                  f"💰 Exit Price: ₹{current_price:.2f}\n"
+                                  f"🎉 Profit Booked!")
+                    trade_state[name] = {'status': 'NONE', 'entry': 0, 'sl': 0, 'target': 0}
+                    continue
+                elif current_price <= state['sl']:
+                    send_telegram(f"❌ *STOP LOSS HIT - {name}*\n\n"
+                                  f"📉 Status: Exit Trade\n"
+                                  f"🔻 Exit Price: ₹{current_price:.2f}")
+                    trade_state[name] = {'status': 'NONE', 'entry': 0, 'sl': 0, 'target': 0}
+                    continue
 
-# ============================================================
-# CHATGPT SCORING LOGIC ENGINE
-# ============================================================
+            elif state['status'] == 'SELL':
+                if current_price <= state['target']:
+                    send_telegram(f"🎯 *TARGET HIT - {name}*\n\n"
+                                  f"📉 Status: Target Completed\n"
+                                  f"💰 Exit Price: ₹{current_price:.2f}\n"
+                                  f"🎉 Profit Booked!")
+                    trade_state[name] = {'status': 'NONE', 'entry': 0, 'sl': 0, 'target': 0}
+                    continue
+                elif current_price >= state['sl']:
+                    send_telegram(f"❌ *STOP LOSS HIT - {name}*\n\n"
+                                  f"📈 Status: Exit Trade\n"
+                                  f"🔺 Exit Price: ₹{current_price:.2f}")
+                    trade_state[name] = {'status': 'NONE', 'entry': 0, 'sl': 0, 'target': 0}
+                    continue
 
-def analyze_asset(ticker, name, session):
-    try:
-        print(f"[SCAN] {name} ({ticker})...")
-        obj = yf.Ticker(ticker, session=session)
-        df = obj.history(period="5d", interval="5m", auto_adjust=False, prepost=False)
+            # --- 2. Signal Generation Filters (High Accuracy) ---
+            # BUY Condition:
+            # 1. Price above EMA 200 (Strong Uptrend)
+            # 2. EMA 20 crosses above EMA 50
+            # 3. RSI between 50 and 68 (Strong Momentum without being Overbought)
+            buy_condition = (
+                current_price > curr['EMA200'] and
+                prev['EMA20'] <= prev['EMA50'] and curr['EMA20'] > curr['EMA50'] and
+                50 < curr['RSI'] < 68
+            )
 
-        df = clean_data(df)
+            # SELL Condition:
+            # 1. Price below EMA 200 (Strong Downtrend)
+            # 2. EMA 20 crosses below EMA 50
+            # 3. RSI between 32 and 50 (Strong Bearish Momentum)
+            sell_condition = (
+                current_price < curr['EMA200'] and
+                prev['EMA20'] >= prev['EMA50'] and curr['EMA20'] < curr['EMA50'] and
+                32 < curr['RSI'] < 50
+            )
 
-        if df.empty or len(df) < 60:
-            print(f" └─ {name}: Insufficient candle data.")
-            return
+            # --- 3. Execute Only If No Active Trade Exists (No Repetition) ---
+            if state['status'] == 'NONE':
+                if buy_condition:
+                    sl = current_price - (1.5 * atr)
+                    target = current_price + (3.0 * atr) # 1:2 Risk-Reward Ratio
+                    
+                    trade_state[name] = {
+                        'status': 'BUY',
+                        'entry': current_price,
+                        'sl': sl,
+                        'target': target
+                    }
+                    
+                    msg = (f"🚀 *HIGH ACCURACY BUY CALL - {name}*\n\n"
+                           f"📊 *Entry Price:* ₹{current_price:.2f}\n"
+                           f"🎯 *Target:* ₹{target:.2f}\n"
+                           f"🛑 *Stop Loss:* ₹{sl:.2f}\n"
+                           f"📈 *Trend:* Strong Bullish (EMA 200 + RSI {curr['RSI']:.1f})\n"
+                           f"⚙️ *Risk/Reward:* 1:2")
+                    send_telegram(msg)
 
-        # Indicators
-        df["VWAP"] = calculate_vwap(df)
-        df["RSI"] = calculate_rsi(df["Close"])
-        df["EMA9"] = df["Close"].ewm(span=9, adjust=False).mean()
-        df["EMA21"] = df["Close"].ewm(span=21, adjust=False).mean()
-        df["ATR"] = calculate_atr(df)
-        df["VolumeMA"] = df["Volume"].rolling(20).mean()
+                elif sell_condition:
+                    sl = current_price + (1.5 * atr)
+                    target = current_price - (3.0 * atr) # 1:2 Risk-Reward Ratio
+                    
+                    trade_state[name] = {
+                        'status': 'SELL',
+                        'entry': current_price,
+                        'sl': sl,
+                        'target': target
+                    }
+                    
+                    msg = (f"🔻 *HIGH ACCURACY SELL CALL - {name}*\n\n"
+                           f"📊 *Entry Price:* ₹{current_price:.2f}\n"
+                           f"🎯 *Target:* ₹{target:.2f}\n"
+                           f"🛑 *Stop Loss:* ₹{sl:.2f}\n"
+                           f"📉 *Trend:* Strong Bearish (EMA 200 + RSI {curr['RSI']:.1f})\n"
+                           f"⚙️ *Risk/Reward:* 1:2")
+                    send_telegram(msg)
 
-        # Last completed candle
-        latest = df.iloc[-2]
-        previous = df.iloc[-3]
-
-        close = float(latest["Close"])
-        vwap = float(latest["VWAP"])
-        rsi = float(latest["RSI"])
-        ema9 = float(latest["EMA9"])
-        ema21 = float(latest["EMA21"])
-        prev_ema9 = float(previous["EMA9"])
-        prev_ema21 = float(previous["EMA21"])
-        atr = float(latest["ATR"])
-        volume = float(latest["Volume"])
-        volume_ma = float(latest["VolumeMA"])
-
-        values = [close, vwap, rsi, ema9, ema21, prev_ema9, prev_ema21, atr, volume_ma]
-        if any(np.isnan(x) for x in values):
-            print(f" └─ {name}: NaN indicator values.")
-            return
-
-        # Technical Conditions
-        above_vwap = close > vwap
-        below_vwap = close < vwap
-        bullish_cross = prev_ema9 <= prev_ema21 and ema9 > ema21
-        bearish_cross = prev_ema9 >= prev_ema21 and ema9 < ema21
-        bullish_trend = ema9 > ema21 and close > ema9
-        bearish_trend = ema9 < ema21 and close < ema9
-        bullish_rsi = 54 <= rsi <= 68
-        bearish_rsi = 32 <= rsi <= 46
-        volume_ok = volume >= volume_ma * 1.20
-        bullish_confirmed = bullish_candle(latest)
-        bearish_confirmed = bearish_candle(latest)
-
-        # Chat GPT Score Criteria (Max 7)
-        buy_score = 0
-        sell_score = 0
-
-        if above_vwap: buy_score += 1
-        if bullish_cross: buy_score += 2
-        if bullish_trend: buy_score += 1
-        if bullish_rsi: buy_score += 1
-        if volume_ok: buy_score += 1
-        if bullish_confirmed: buy_score += 1
-
-        if below_vwap: sell_score += 1
-        if bearish_cross: sell_score += 2
-        if bearish_trend: sell_score += 1
-        if bearish_rsi: sell_score += 1
-        if volume_ok: sell_score += 1
-        if bearish_confirmed: sell_score += 1
-
-        print(f" └─ Price: {close:.2f} | RSI: {rsi:.2f} | BUY Score: {buy_score}/7 | SELL Score: {sell_score}/7")
-
-        # Stop-Loss & Target
-        sl_distance = max(atr * 1.20, close * 0.004)
-        target_distance = sl_distance * 2
-
-        buy_setup = (
-            buy_score >= 6
-            and above_vwap
-            and bullish_trend
-            and bullish_rsi
-            and volume_ok
-            and bullish_confirmed
-        )
-
-        sell_setup = (
-            sell_score >= 6
-            and below_vwap
-            and bearish_trend
-            and bearish_rsi
-            and volume_ok
-            and bearish_confirmed
-        )
-
-        # 🟢 BUY SIGNAL
-        if buy_setup:
-            if not is_duplicate_alert(name, "BUY"):
-                sl = close - sl_distance
-                target = close + target_distance
-
-                if ticker in INDEX_SYMBOLS:
-                    message = (
-                        "🟢 *INDEX OPTIONS SETUP*\n"
-                        "━━━━━━━━━━━━━━━━━━\n"
-                        f"📌 *Index:* `{name}`\n"
-                        "📈 *Bias:* BULLISH\n"
-                        "🎯 *Option:* BUY CE\n\n"
-                        f"📍 *Underlying Price:* `{close:.2f}`\n"
-                        f"📊 *VWAP:* `{vwap:.2f}` ✅\n"
-                        f"📈 *RSI:* `{rsi:.2f}`\n"
-                        f"📈 *EMA9:* `{ema9:.2f}`\n"
-                        f"📉 *EMA21:* `{ema21:.2f}`\n"
-                        "🔊 *Volume:* Confirmed ✅\n\n"
-                        f"🎯 *Underlying Target:* `{target:.2f}`\n"
-                        f"🛑 *Underlying SL:* `{sl:.2f}`\n"
-                        "⚖️ *RR:* 1:2\n"
-                        f"⭐ *Score:* `{buy_score}/7`"
-                    )
-                else:
-                    message = (
-                        "🟢 *BUY ALERT*\n"
-                        "━━━━━━━━━━━━━━━━━━\n"
-                        f"📌 *Asset:* `{name}`\n"
-                        f"💰 *Price:* `{close:.2f}`\n"
-                        f"📊 *VWAP:* `{vwap:.2f}` ✅\n"
-                        f"📈 *RSI:* `{rsi:.2f}`\n"
-                        f"📈 *EMA9:* `{ema9:.2f}`\n"
-                        f"📉 *EMA21:* `{ema21:.2f}`\n"
-                        "🔊 *Volume:* Confirmed ✅\n\n"
-                        f"🎯 *Target:* `{target:.2f}`\n"
-                        f"🛑 *SL:* `{sl:.2f}`\n"
-                        "⚖️ *RR:* 1:2\n"
-                        f"⭐ *Score:* `{buy_score}/7`"
-                    )
-                send_telegram(message)
-
-        # 🔴 SELL SIGNAL
-        elif sell_setup:
-            if not is_duplicate_alert(name, "SELL"):
-                sl = close + sl_distance
-                target = close - target_distance
-
-                if ticker in INDEX_SYMBOLS:
-                    message = (
-                        "🔴 *INDEX OPTIONS SETUP*\n"
-                        "━━━━━━━━━━━━━━━━━━\n"
-                        f"📌 *Index:* `{name}`\n"
-                        "📉 *Bias:* BEARISH\n"
-                        "🎯 *Option:* BUY PE\n\n"
-                        f"📍 *Underlying Price:* `{close:.2f}`\n"
-                        f"📊 *VWAP:* `{vwap:.2f}` 🔻\n"
-                        f"📉 *RSI:* `{rsi:.2f}`\n"
-                        f"📈 *EMA9:* `{ema9:.2f}`\n"
-                        f"📉 *EMA21:* `{ema21:.2f}`\n"
-                        "🔊 *Volume:* Confirmed ✅\n\n"
-                        f"🎯 *Underlying Target:* `{target:.2f}`\n"
-                        f"🛑 *Underlying SL:* `{sl:.2f}`\n"
-                        "⚖️ *RR:* 1:2\n"
-                        f"⭐ *Score:* `{sell_score}/7`"
-                    )
-                else:
-                    message = (
-                        "🔴 *SELL ALERT*\n"
-                        "━━━━━━━━━━━━━━━━━━\n"
-                        f"📌 *Asset:* `{name}`\n"
-                        f"💰 *Price:* `{close:.2f}`\n"
-                        f"📊 *VWAP:* `{vwap:.2f}` 🔻\n"
-                        f"📉 *RSI:* `{rsi:.2f}`\n"
-                        f"📈 *EMA9:* `{ema9:.2f}`\n"
-                        f"📉 *EMA21:* `{ema21:.2f}`\n"
-                        "🔊 *Volume:* Confirmed ✅\n\n"
-                        f"🎯 *Target:* `{target:.2f}`\n"
-                        f"🛑 *SL:* `{sl:.2f}`\n"
-                        "⚖️ *RR:* 1:2\n"
-                        f"⭐ *Score:* `{sell_score}/7`"
-                    )
-                send_telegram(message)
-
-    except Exception as e:
-        print(f"[ANALYSIS ERROR] {ticker}: {e}")
-
-
-# ============================================================
-# MAIN ENTRY POINT FOR GITHUB ACTIONS
-# ============================================================
-
-def main():
-    now = datetime.now(IST)
-    print("==========================================")
-    print(f"Scanner Execution Time: [{now.strftime('%d-%m-%Y %H:%M:%S')} IST]")
-    print("==========================================")
-
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36"
-    })
-
-    for ticker, name in WATCHLIST.items():
-        analyze_asset(ticker, name, session)
-        time.sleep(1)
-
-    print("\n[Scan Completed Successfully]")
+        except Exception as e:
+            print(f"Error processing {name}: {e}")
 
 if __name__ == "__main__":
-    main()
+    analyze_and_trade()
