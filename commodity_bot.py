@@ -61,42 +61,59 @@ def run_commodity_bot():
             if name == "CRUDEOIL":
                 close_inr = close_15m_usd * 86.5
                 strike = int(round(close_inr / 50) * 50)
-                expiry_opt = "17-AUG-26"
-                expiry_fut = "19-AUG-26"
-                # Estimated ATM Option Premium Price (~2% of underlying)
+                
+                # Expiry formats
+                exp_angel_opt = "17-AUG-26"
+                exp_angel_fut = "19-AUG-26"
+                exp_5p_opt = "17 AUG 2026"
+                exp_5p_fut = "19 AUG 2026"
+                
                 est_option_premium = close_inr * 0.022
             elif name == "NATURALGAS":
                 close_inr = close_15m_usd * 95.3
                 strike = int(round(close_inr / 5) * 5)
-                expiry_opt = "24-AUG-26"
-                expiry_fut = "26-AUG-26"
-                # Estimated ATM Option Premium Price (~3% of underlying)
+                
+                # Expiry formats
+                exp_angel_opt = "24-AUG-26"
+                exp_angel_fut = "26-AUG-26"
+                exp_5p_opt = "24 AUG 2026"
+                exp_5p_fut = "26 AUG 2026"
+                
                 est_option_premium = close_inr * 0.029
 
             option_type = "CE" if signal == "BUY" else "PE"
             emoji = "🟢" if signal == "BUY" else "🔴"
 
             # Targets and SL for Option Premium
-            opt_target = est_option_premium * 1.25  # 25% Profit Target on Option
-            opt_sl = est_option_premium * 0.85      # 15% Stoploss on Option
+            opt_target = est_option_premium * 1.25
+            opt_sl = est_option_premium * 0.85
 
-            search_fut = f"{name} {expiry_fut}"
-            search_opt = f"{name} {expiry_opt} {strike} {option_type}"
+            # Search Formats
+            search_angel_opt = f"{name} {exp_angel_opt} {strike} {option_type}"
+            search_angel_fut = f"{name} {exp_angel_fut}"
+            
+            search_5p_opt = f"{name} {exp_5p_opt} {strike} {option_type}"
+            search_5p_fut = f"{name} {exp_5p_fut} FUT"
 
             msg = f"""
 {emoji} <b>MCX COMMODITY {signal} SIGNAL</b>
 ━━━━━━━━━━━━━━━━━━
-📊 <b>Overall Day Trend:</b> {macro_trend} 📈
+📊 <b>Overall Day Trend:</b> {macro_trend}
 ⏱️ <b>Trigger:</b> 15-Min VWAP Aligned
-🏷️ <b>Category:</b> <b>INTRADAY / MCX POSITIONAL</b>
+📌 <b>MCX Spot Price:</b> ₹{close_inr:.2f}
 ━━━━━━━━━━━━━━━━━━
-📌 <b>Asset:</b> {name} (Spot: ₹{close_inr:.2f})
-🔍 <b>Angel One Search:</b> <code>{search_opt}</code>
+📱 <b>ANGEL ONE SEARCH:</b>
+• <b>Option:</b> <code>{search_angel_opt}</code>
+• <b>Future:</b> <code>{search_angel_fut}</code>
+
+📱 <b>5PAISA SEARCH:</b>
+• <b>Option:</b> <code>{search_5p_opt}</code>
+• <b>Future:</b> <code>{search_5p_fut}</code>
 ━━━━━━━━━━━━━━━━━━
-💡 <b>OPTION TRADE DETAILS:</b>
-💰 <b>Option Buy Range:</b> ₹{est_option_premium:.2f}
-🎯 <b>Option Target:</b> ₹{opt_target:.2f}
-🛑 <b>Option Stop Loss:</b> ₹{opt_sl:.2f}
+💡 <b>OPTION LEVEL DETAILS:</b>
+💰 <b>Buy Price:</b> ₹{est_option_premium:.2f}
+🎯 <b>Target:</b> ₹{opt_target:.2f}
+🛑 <b>Stop Loss:</b> ₹{opt_sl:.2f}
 ━━━━━━━━━━━━━━━━━━
 🛡️ <i>Daily Trend matched. Paper trade first.</i>
 """
