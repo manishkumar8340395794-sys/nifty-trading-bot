@@ -19,10 +19,10 @@ def send_telegram_message(message):
         print(f"Error sending message: {e}")
 
 def run_commodity_bot():
-    # MCX Commodities Configuration
-    # is_option_available: False (केवल फ्यूचर सिग्नल देगा, जैसे Aluminium)
+    # MCX Market Aligned Configuration
+    # Factor को MCX के लाइव भाव (₹7858 / WTI Price) के अनुसार अपडेट किया गया है (~96.5)
     commodities = {
-        "CRUDEOIL": {"ticker": "CL=F", "factor": 86.5, "strike_step": 50, "opt_exp_angel": "17-AUG-26", "fut_exp_angel": "19-AUG-26", "opt_exp_5p": "17 AUG 2026", "fut_exp_5p": "19 AUG 2026", "prem_pct": 0.022, "has_option": True},
+        "CRUDEOIL": {"ticker": "CL=F", "factor": 96.5, "strike_step": 50, "opt_exp_angel": "17-AUG-26", "fut_exp_angel": "19-AUG-26", "opt_exp_5p": "17 AUG 2026", "fut_exp_5p": "19 AUG 2026", "prem_pct": 0.020, "has_option": True},
         "NATURALGAS": {"ticker": "NG=F", "factor": 95.3, "strike_step": 5, "opt_exp_angel": "24-AUG-26", "fut_exp_angel": "26-AUG-26", "opt_exp_5p": "24 AUG 2026", "fut_exp_5p": "26 AUG 2026", "prem_pct": 0.029, "has_option": True},
         "GOLD": {"ticker": "GC=F", "factor": 86.5, "strike_step": 100, "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "05-OCT-26", "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "05 OCT 2026", "prem_pct": 0.015, "has_option": True},
         "SILVER": {"ticker": "SI=F", "factor": 86.5, "strike_step": 500, "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "05-SEP-26", "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "05 SEP 2026", "prem_pct": 0.020, "has_option": True},
@@ -44,7 +44,7 @@ def run_commodity_bot():
             daily_sma20 = float(df_daily['Close'].rolling(20).mean().iloc[-1].item() if hasattr(df_daily['Close'].rolling(20).mean().iloc[-1], 'item') else df_daily['Close'].rolling(20).mean().iloc[-1])
             macro_trend = "BULLISH" if daily_close > daily_sma20 else "BEARISH"
 
-            # 15-Min Candle Data
+            # 15-Min Data
             df_15m = yf.download(ticker, period="5d", interval="15m", progress=False)
             if df_15m.empty:
                 continue
@@ -56,6 +56,7 @@ def run_commodity_bot():
             close = df_15m['Close']
             vwap_usd = float(((vol * (high + low + close) / 3).sum() / vol.sum()).item() if hasattr(((vol * (high + low + close) / 3).sum() / vol.sum()), 'item') else ((vol * (high + low + close) / 3).sum() / vol.sum()))
 
+            # Corrected Spot Price for MCX
             close_inr = close_15m_usd * config["factor"]
 
             # Signal Logic
@@ -70,7 +71,6 @@ def run_commodity_bot():
 
             emoji = "🟢" if signal == "BUY" else "🔴"
 
-            # अगर Option उपलब्ध है (जैसे Crude oil, NatGas)
             if config["has_option"]:
                 est_option_premium = close_inr * config["prem_pct"]
                 strike = int(round(close_inr / config["strike_step"]) * config["strike_step"])
@@ -107,7 +107,6 @@ def run_commodity_bot():
 ━━━━━━━━━━━━━━━━━━
 🛡️ <i>Daily Trend matched. Paper trade first.</i>
 """
-            # अगर केवल Future उपलब्ध है (जैसे Aluminium, Zinc)
             else:
                 fut_target = close_inr * (1.015 if signal == "BUY" else 0.985)
                 fut_sl = close_inr * (0.992 if signal == "BUY" else 1.008)
