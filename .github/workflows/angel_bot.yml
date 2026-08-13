@@ -1,0 +1,36 @@
+name: Run Angel Bot
+
+on:
+  schedule:
+    # सोमवार से शुक्रवार, भारतीय समय अनुसार सुबह 9:00 बजे से दोपहर 3:30 बजे तक
+    - cron: '*/15 3-10 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  run-angel-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    - name: Run Angel Bot Script
+      env:
+        ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
+        ANGEL_CLIENT_ID: ${{ secrets.ANGEL_CLIENT_ID }}
+        ANGEL_PASSWORD: ${{ secrets.ANGEL_PASSWORD }}
+        ANGEL_PIN: ${{ secrets.ANGEL_PIN }}
+        ANGEL_TOTP_KEY: ${{ secrets.ANGEL_TOTP_KEY }}
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        CHAT_ID: ${{ secrets.CHAT_ID }}
+      run: python angel_bot.py
