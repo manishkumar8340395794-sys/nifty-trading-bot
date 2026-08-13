@@ -6,6 +6,9 @@ from datetime import datetime
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# सक्रिय सिग्नल्स को ट्रैक करने के लिए डिक्शनरी
+active_trades = {}
+
 def send_telegram_message(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
@@ -17,35 +20,63 @@ def send_telegram_message(message):
         print(f"Error sending message: {e}")
 
 def run_commodity_bot():
+    # MCX की सभी मुख्य कमोडिटीज़ का Yahoo Ticker और कन्वर्जन कॉन्फ़िगरेशन
     commodities = {
-        "CRUDEOIL": "CL=F",
-        "NATURALGAS": "NG=F"
+        "CRUDEOIL": {"ticker": "CL=F", "factor": 86.5, "strike_step": 50, "opt_exp_angel": "17-AUG-26", "fut_exp_angel": "19-AUG-26", "opt_exp_5p": "17 AUG 2026", "fut_exp_5p": "19 AUG 2026", "prem_pct": 0.022},
+        "NATURALGAS": {"ticker": "NG=F", "factor": 95.3, "strike_step": 5, "opt_exp_angel": "24-AUG-26", "fut_exp_angel": "26-AUG-26", "opt_exp_5p": "24 AUG 2026", "fut_exp_5p": "26 AUG 2026", "prem_pct": 0.029},
+        "GOLD": {"ticker": "GC=F", "factor": 86.5, "strike_step": 100, "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "05-OCT-26", "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "05 OCT 2026", "prem_pct": 0.015},
+        "SILVER": {"ticker": "SI=F", "factor": 86.5, "strike_step": 500, "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "05-SEP-26", "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "05 SEP 2026", "prem_pct": 0.020},
+        "COPPER": {"ticker": "HG=F", "factor": 185.0, "strike_step": 5, "opt_exp_angel": "25-AUG-26", "fut_exp_angel": "31-AUG-26", "opt_exp_5p": "25 AUG 2026", "fut_exp_5p": "31 AUG 2026", "prem_pct": 0.020},
+        "ZINC": {"ticker": "ZNC=F", "factor": 86.5, "strike_step": 2, "opt_exp_angel": "25-AUG-26", "fut_exp_angel": "31-AUG-26", "opt_exp_5p": "25 AUG 2026", "fut_exp_5p": "31 AUG 2026", "prem_pct": 0.020},
+        "ALUMINIUM": {"ticker": "ALI=F", "factor": 86.5, "strike_step": 2, "opt_exp_angel": "25-AUG-26", "fut_exp_angel": "31-AUG-26", "opt_exp_5p": "25 AUG 2026", "fut_exp_5p": "31 AUG 2026", "prem_pct": 0.020}
     }
 
-    for name, ticker in commodities.items():
+    for name, config in commodities.items():
         try:
-            # 1. Fetch Daily Data (1D) for Overall Trend
+            ticker = config["ticker"]
+            
+            # 1. Daily Trend Fetching
             df_daily = yf.download(ticker, period="30d", interval="1d", progress=False)
             if df_daily.empty:
                 continue
                 
             daily_close = float(df_daily['Close'].iloc[-1].item() if hasattr(df_daily['Close'].iloc[-1], 'item') else df_daily['Close'].iloc[-1])
             daily_sma20 = float(df_daily['Close'].rolling(20).mean().iloc[-1].item() if hasattr(df_daily['Close'].rolling(20).mean().iloc[-1], 'item') else df_daily['Close'].rolling(20).mean().iloc[-1])
-            
             macro_trend = "BULLISH" if daily_close > daily_sma20 else "BEARISH"
 
-            # 2. Fetch 15-Minute Data
+            # 2. 15-Min Candle Data
             df_15m = yf.download(ticker, period="5d", interval="15m", progress=False)
             if df_15m.empty:
                 continue
                 
             close_15m_usd = float(df_15m['Close'].iloc[-1].item() if hasattr(df_15m['Close'].iloc[-1], 'item') else df_15m['Close'].iloc[-1])
-            
             vol = df_15m['Volume']
             high = df_15m['High']
             low = df_15m['Low']
             close = df_15m['Close']
             vwap_usd = float(((vol * (high + low + close) / 3).sum() / vol.sum()).item() if hasattr(((vol * (high + low + close) / 3).sum() / vol.sum()), 'item') else ((vol * (high + low + close) / 3).sum() / vol.sum()))
+
+            close_inr = close_15m_usd * config["factor"]
+            est_option_premium = close_inr * config["prem_pct"]
+
+            # --- 3. TARGET / STOP LOSS TRACKING LOGIC ---
+            if name in active_trades:
+                trade = active_trades[name]
+                current_prem = est_option_premium
+
+                # Check Target Hit
+                if current_prem >= trade["target"]:
+                    alert_msg = f"🎯 <b>TARGET HIT ALERT!</b>\n━━━━━━━━━━━━━━━━━━\n📌 <b>Asset:</b> {name}\n💡 <b>Entry Price:</b> ₹{trade['buy_price']:.2f}\n🎯 <b>Target Achieved:</b> ₹{current_prem:.2f}\n✅ <b>Profit Booked!</b>"
+                    send_telegram_message(alert_msg)
+                    del active_trades[name]
+                    continue
+
+                # Check Stop Loss Hit
+                elif current_prem <= trade["sl"]:
+                    alert_msg = f"🛑 <b>STOP LOSS HIT ALERT!</b>\n━━━━━━━━━━━━━━━━━━\n📌 <b>Asset:</b> {name}\n💡 <b>Entry Price:</b> ₹{trade['buy_price']:.2f}\n🛑 <b>Exit Price:</b> ₹{current_prem:.2f}\n⚠️ <b>Exit Trade to Minimize Loss.</b>"
+                    send_telegram_message(alert_msg)
+                    del active_trades[name]
+                    continue
 
             # Signal Logic
             signal = None
@@ -57,42 +88,26 @@ def run_commodity_bot():
             if not signal:
                 continue
 
-            # USD to MCX Conversion Logic
-            if name == "CRUDEOIL":
-                close_inr = close_15m_usd * 86.5
-                strike = int(round(close_inr / 50) * 50)
-                
-                exp_angel_opt = "17-AUG-26"
-                exp_angel_fut = "19-AUG-26"
-                exp_5p_opt = "17 AUG 2026"
-                exp_5p_fut = "19 AUG 2026"
-                
-                est_option_premium = close_inr * 0.022
-            elif name == "NATURALGAS":
-                close_inr = close_15m_usd * 95.3
-                strike = int(round(close_inr / 5) * 5)
-                
-                exp_angel_opt = "24-AUG-26"
-                exp_angel_fut = "26-AUG-26"
-                exp_5p_opt = "24 AUG 2026"
-                exp_5p_fut = "26 AUG 2026"
-                
-                est_option_premium = close_inr * 0.029
-
+            # Calculate Strike, Target, SL
+            strike = int(round(close_inr / config["strike_step"]) * config["strike_step"])
             option_type = "CE" if signal == "BUY" else "PE"
             emoji = "🟢" if signal == "BUY" else "🔴"
 
-            # Target & Stop Loss Calculation
             opt_target = est_option_premium * 1.25
             opt_sl = est_option_premium * 0.85
 
-            # Formats for Angel One
-            search_angel_opt = f"{name} {exp_angel_opt} {strike} {option_type}"
-            search_angel_fut = f"{name} {exp_angel_fut}"
+            # Save Trade to Active Tracking
+            active_trades[name] = {
+                "buy_price": est_option_premium,
+                "target": opt_target,
+                "sl": opt_sl
+            }
 
-            # Formats for 5paisa
-            search_5p_opt = f"{name} {exp_5p_opt} {strike} {option_type}"
-            search_5p_fut = f"{name} {exp_5p_fut} FUT"
+            # Search String Formats
+            search_angel_opt = f"{name} {config['opt_exp_angel']} {strike} {option_type}"
+            search_angel_fut = f"{name} {config['fut_exp_angel']}"
+            search_5p_opt = f"{name} {config['opt_exp_5p']} {strike} {option_type}"
+            search_5p_fut = f"{name} {config['fut_exp_5p']} FUT"
 
             msg = f"""
 {emoji} <b>MCX COMMODITY {signal} SIGNAL</b>
