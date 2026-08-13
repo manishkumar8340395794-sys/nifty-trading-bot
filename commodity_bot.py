@@ -21,9 +21,6 @@ def run_commodity_bot():
         "CRUDEOIL": "CL=F",
         "NATURALGAS": "NG=F"
     }
-    
-    # Approx USD to INR Exchange Rate for MCX Conversion
-    USD_TO_INR = 86.5 
 
     for name, ticker in commodities.items():
         try:
@@ -60,17 +57,18 @@ def run_commodity_bot():
             if not signal:
                 continue
 
-            # Convert USD Price to INR MCX Equivalent
+            # Correct USD to MCX INR Conversion & Strike Logic
             if name == "CRUDEOIL":
-                close_inr = close_15m_usd * USD_TO_INR
+                close_inr = close_15m_usd * 86.5
                 strike = int(round(close_inr / 50) * 50)
-                expiry_opt = "17AUG26"
-                expiry_fut = "19AUG26"
+                expiry_opt = "17-AUG-26"
+                expiry_fut = "19-AUG-26"
             elif name == "NATURALGAS":
-                close_inr = close_15m_usd * (USD_TO_INR / 26) # Adjusted factor for NatGas MCX Lot
-                strike = int(round(close_inr))
-                expiry_opt = "24AUG26"
-                expiry_fut = "26AUG26"
+                # Correct factor to match MCX price (~264 INR)
+                close_inr = close_15m_usd * 95.3
+                strike = int(round(close_inr / 5) * 5)
+                expiry_opt = "24-AUG-26"
+                expiry_fut = "26-AUG-26"
 
             option_type = "CE" if signal == "BUY" else "PE"
             emoji = "🟢" if signal == "BUY" else "🔴"
@@ -78,7 +76,7 @@ def run_commodity_bot():
             target_inr = close_inr * 1.012 if signal == "BUY" else close_inr * 0.988
             sl_inr = close_inr * 0.994 if signal == "BUY" else close_inr * 1.006
 
-            search_fut = f"{name} {expiry_fut} FUT"
+            search_fut = f"{name} {expiry_fut}"
             search_opt = f"{name} {expiry_opt} {strike} {option_type}"
 
             msg = f"""
