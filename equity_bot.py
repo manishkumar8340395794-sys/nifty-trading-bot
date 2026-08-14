@@ -5,7 +5,6 @@ from datetime import datetime, date
 import calendar
 import logging
 
-# Yahoo Finance ke faltu 404 warnings ko hide karne ke liye
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -23,7 +22,7 @@ def send_telegram_message(message):
         print(f"Error sending message: {e}")
 
 def get_fno_expiries():
-    """NSE Expiry Format"""
+    """Current Month Thursday Expiry Format (e.g. 25AUG or AUG)"""
     today = date.today()
     year, month = today.year, today.month
     last_day = calendar.monthrange(year, month)[1]
@@ -44,8 +43,9 @@ def get_fno_expiries():
                 last_thursday = d
                 break
 
-    stock_exp_angel = last_thursday.strftime("%d%b%y").upper() 
-    return stock_exp_angel
+    # e.g., 25AUG
+    stock_exp_short = last_thursday.strftime("%d%b").upper() 
+    return stock_exp_short
 
 def safe_extract_val(val):
     try:
@@ -58,7 +58,6 @@ def safe_extract_val(val):
         return None
 
 def fetch_data_safely(ticker, period, interval):
-    """Yahoo Finance 404 Error Suppressor & Downloader"""
     try:
         df = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=False)
         if not df.empty:
@@ -68,7 +67,7 @@ def fetch_data_safely(ticker, period, interval):
     return None
 
 def run_equity_fno_bot():
-    stock_exp_angel = get_fno_expiries()
+    stock_exp_short = get_fno_expiries()
 
     stocks = {
         # --- INDICES ---
@@ -163,7 +162,10 @@ def run_equity_fno_bot():
             # Option Calculations
             strike = int(round(close_15m / config["step"]) * config["step"])
             option_type = "CE" if signal == "BUY" else "PE"
-            easy_search = f"{name} {strike} {option_type}"
+
+            # Search with Expiry Tag for Exact Match
+            easy_search = f"{name} {stock_exp_short} {strike} {option_type}"
+            simple_search = f"{name} {strike} {option_type}"
 
             # Estimated Premium Calculation
             est_premium = close_15m * config.get("approx_premium_pct", 0.015)
@@ -186,11 +188,12 @@ def run_equity_fno_bot():
 
 🔥 <b>F&O OPTION TRADE ({option_type}):</b>
 • <b>Search Broker:</b> <code>{easy_search}</code>
+• <b>Alt Search:</b> <code>{simple_search}</code> <i>(Select Top/Current Expiry)</i>
 • <b>Est. Entry Price:</b> Buy around {opt_buy_range}
 • <b>Option Target (+30%):</b> ₹{opt_target:.2f}
 • <b>Option Stop Loss (-15%):</b> ₹{opt_sl:.2f}
 ━━━━━━━━━━━━━━━━━━
-🛡️ <i>Option Targets rely on Option Premium movements. Risk management is key.</i>
+🛡️ <i>Always select the Current Month Expiry in your broker app.</i>
 """
             send_telegram_message(msg)
 
@@ -201,4 +204,3 @@ def run_equity_fno_bot():
 
 if __name__ == "__main__":
     run_equity_fno_bot()
-    
