@@ -1,7 +1,7 @@
 import os
 import requests
 import yfinance as yf
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import calendar
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -18,33 +18,37 @@ def send_telegram_message(message):
     except Exception as e:
         print(f"Error sending message: {e}")
 
-def get_current_expiry():
-    """महीने के आखिरी गुरुवार (Expiry) की तारीख निकालता है"""
+def get_fno_expiries():
+    """NSE/Angel One/5Paisa के लिए एकदम सही एक्सपायरी फॉर्मेट निकालता है"""
     today = date.today()
-    year = today.year
-    month = today.month
     
-    # महीने का आखिरी दिन
+    # Stock Monthly Expiry (Month's Last Thursday)
+    year, month = today.year, today.month
     last_day = calendar.monthrange(year, month)[1]
-    
-    # आखिरी गुरुवार ढूंढना
+    last_thursday = None
     for day in range(last_day, 0, -1):
         d = date(year, month, day)
-        if d.weekday() == 3: # 3 = Thursday
-            if d < today:
-                if month == 12:
-                    month = 1
-                    year += 1
-                else:
-                    month += 1
-                return get_current_expiry()
+        if d.weekday() == 3: # Thursday
+            last_thursday = d
+            break
             
-            angel_fmt = d.strftime("%d-%b-%Y").upper() # Ex: 27-AUG-2026
-            fivep_fmt = d.strftime("%d %b %Y").upper() # Ex: 27 AUG 2026
-            return angel_fmt, fivep_fmt
+    if last_thursday < today:
+        month = 1 if month == 12 else month + 1
+        year = year + 1 if month == 1 else year
+        last_day = calendar.monthrange(year, month)[1]
+        for day in range(last_day, 0, -1):
+            d = date(year, month, day)
+            if d.weekday() == 3:
+                last_thursday = d
+                break
+
+    # Angel One Format: "27AUG26" or "27 AUG"
+    stock_exp_angel = last_thursday.strftime("%d%b%y").upper() 
+    stock_exp_simple = last_thursday.strftime("%d %b").upper()
+    
+    return stock_exp_angel, stock_exp_simple
 
 def safe_extract_val(val):
-    """Pandas Series / Float conversion issue fix"""
     try:
         if hasattr(val, 'iloc'):
             val = val.iloc[-1]
@@ -55,58 +59,47 @@ def safe_extract_val(val):
         return None
 
 def run_equity_fno_bot():
-    expiry_dates = get_current_expiry()
-    if not expiry_dates:
-        angel_exp, fivep_exp = "EXPIRY", "EXPIRY"
-    else:
-        angel_exp, fivep_exp = expiry_dates
+    stock_exp_angel, stock_exp_simple = get_fno_expiries()
 
-    # Nifty 50, Bank Nifty & Major Sectoral Stocks List
+    # Broad Stocks & Indices Config
     stocks = {
         # --- INDICES ---
-        "NIFTY": {"ticker": "^NSEI", "step": 50, "is_fno": True},
-        "BANKNIFTY": {"ticker": "^NSEBANK", "step": 100, "is_fno": True},
+        "NIFTY": {"ticker": "^NSEI", "step": 50},
+        "BANKNIFTY": {"ticker": "^NSEBANK", "step": 100},
 
         # --- IT SECTOR ---
-        "TCS": {"ticker": "TCS.NS", "step": 50, "is_fno": True},
-        "INFY": {"ticker": "INFY.NS", "step": 20, "is_fno": True},
-        "WIPRO": {"ticker": "WIPRO.NS", "step": 10, "is_fno": True},
-        "HCLTECH": {"ticker": "HCLTECH.NS", "step": 20, "is_fno": True},
-        "TECHM": {"ticker": "TECHM.NS", "step": 20, "is_fno": True},
+        "TCS": {"ticker": "TCS.NS", "step": 50},
+        "INFY": {"ticker": "INFY.NS", "step": 20},
+        "WIPRO": {"ticker": "WIPRO.NS", "step": 5},
+        "HCLTECH": {"ticker": "HCLTECH.NS", "step": 20},
 
-        # --- BANKING & FINANCE ---
-        "HDFCBANK": {"ticker": "HDFCBANK.NS", "step": 20, "is_fno": True},
-        "ICICIBANK": {"ticker": "ICICIBANK.NS", "step": 20, "is_fno": True},
-        "SBIN": {"ticker": "SBIN.NS", "step": 10, "is_fno": True},
-        "KOTAKBANK": {"ticker": "KOTAKBANK.NS", "step": 20, "is_fno": True},
-        "AXISBANK": {"ticker": "AXISBANK.NS", "step": 20, "is_fno": True},
+        # --- BANKING ---
+        "HDFCBANK": {"ticker": "HDFCBANK.NS", "step": 20},
+        "ICICIBANK": {"ticker": "ICICIBANK.NS", "step": 10},
+        "SBIN": {"ticker": "SBIN.NS", "step": 10},
+        "AXISBANK": {"ticker": "AXISBANK.NS", "step": 10},
 
-        # --- CHEMICAL SECTOR ---
-        "SRF": {"ticker": "SRF.NS", "step": 50, "is_fno": True},
-        "AARTIIND": {"ticker": "AARTIIND.NS", "step": 10, "is_fno": True},
-        "ATUL": {"ticker": "ATUL.NS", "step": 100, "is_fno": True},
-        "DEEPAKNTR": {"ticker": "DEEPAKNTR.NS", "step": 20, "is_fno": True},
-        "UPL": {"ticker": "UPL.NS", "step": 10, "is_fno": True},
+        # --- CHEMICAL & AUTO ---
+        "SRF": {"ticker": "SRF.NS", "step": 50},
+        "AARTIIND": {"ticker": "AARTIIND.NS", "step": 10},
+        "DEEPAKNTR": {"ticker": "DEEPAKNTR.NS", "step": 20},
+        "MARUTI": {"ticker": "MARUTI.NS", "step": 100},
+        "M&M": {"ticker": "M&M.NS", "step": 20},
+        "TATAMOTORS": {"ticker": "TATAMOTORS.NS", "step": 10},
 
-        # --- AUTO SECTOR ---
-        "MARUTI": {"ticker": "MARUTI.NS", "step": 100, "is_fno": True},
-        "M&M": {"ticker": "M&M.NS", "step": 20, "is_fno": True},
-        "TATAMOTORS": {"ticker": "TATAMOTORS.NS", "step": 10, "is_fno": True},
-
-        # --- PHARMA & METALS ---
-        "SUNPHARMA": {"ticker": "SUNPHARMA.NS", "step": 20, "is_fno": True},
-        "TATASTEEL": {"ticker": "TATASTEEL.NS", "step": 2.5, "is_fno": True},
-        "RELIANCE": {"ticker": "RELIANCE.NS", "step": 20, "is_fno": True}
+        # --- OTHERS ---
+        "RELIANCE": {"ticker": "RELIANCE.NS", "step": 20},
+        "TATASTEEL": {"ticker": "TATASTEEL.NS", "step": 2}
     }
 
-    print("Scanning Market with Multi-Timeframe Analysis...")
+    print("Scanning Equity & F&O Market...")
 
     for name, config in stocks.items():
         try:
             ticker = config["ticker"]
 
-            # 1. Daily Trend Analysis
-            df_daily = yf.download(ticker, period="30d", interval="1d", progress=False)
+            # 1. Daily Trend (Unadjusted price for accurate Spot level)
+            df_daily = yf.download(ticker, period="40d", interval="1d", auto_adjust=False, progress=False)
             if df_daily.empty or len(df_daily) < 20:
                 continue
 
@@ -120,7 +113,7 @@ def run_equity_fno_bot():
             macro_trend = "BULLISH" if daily_close > daily_sma20 else "BEARISH"
 
             # 2. 15-Min VWAP Trigger
-            df_15m = yf.download(ticker, period="5d", interval="15m", progress=False)
+            df_15m = yf.download(ticker, period="5d", interval="15m", auto_adjust=False, progress=False)
             if df_15m.empty:
                 continue
 
@@ -133,7 +126,6 @@ def run_equity_fno_bot():
             low = df_15m['Low']
             close = df_15m['Close']
 
-            # VWAP Calculation Safely
             tot_vol = safe_extract_val(vol.sum())
             if tot_vol and tot_vol > 0:
                 vwap_val = ((vol * (high + low + close) / 3).sum()) / vol.sum()
@@ -144,7 +136,7 @@ def run_equity_fno_bot():
             if vwap is None:
                 continue
 
-            # Signal Logic
+            # Signal Generation
             signal = None
             if macro_trend == "BULLISH" and close_15m > vwap:
                 signal = "BUY"
@@ -159,15 +151,16 @@ def run_equity_fno_bot():
             # Targets & Stop Loss
             intra_target = close_15m * (1.01 if signal == "BUY" else 0.99)
             intra_sl = close_15m * (0.995 if signal == "BUY" else 1.005)
-            swing_target = close_15m * (1.05 if signal == "BUY" else 0.95)
-            swing_sl = close_15m * (0.97 if signal == "BUY" else 1.03)
+            swing_target = close_15m * (1.04 if signal == "BUY" else 0.96)
+            swing_sl = close_15m * (0.98 if signal == "BUY" else 1.02)
 
+            # Rounding to Strike Price
             strike = int(round(close_15m / config["step"]) * config["step"])
             option_type = "CE" if signal == "BUY" else "PE"
 
-            search_angel_opt = f"{name} {angel_exp} {strike} {option_type}"
-            search_5p_opt = f"{name} {fivep_exp} {strike} {option_type}"
-            search_angel_fut = f"{name} {angel_exp} FUT"
+            # Perfect Search Strings for Brokers
+            angel_search = f"{name} {stock_exp_angel} {strike} {option_type}" # Ex: HDFCBANK 27AUG26 1700 PE
+            easy_search = f"{name} {strike} {option_type}"                  # Ex: HDFCBANK 1700 PE (Angel/5Paisa Direct)
 
             msg = f"""
 {emoji} <b>NSE EQUITY / F&O {signal} SIGNAL</b>
@@ -187,12 +180,9 @@ def run_equity_fno_bot():
 • <b>Target:</b> ₹{swing_target:.2f}
 • <b>Stop Loss:</b> ₹{swing_sl:.2f}
 ━━━━━━━━━━━━━━━━━━
-📱 <b>F&O SEARCH DETAILS (Angel One):</b>
-• <b>Option:</b> <code>{search_angel_opt}</code>
-• <b>Future:</b> <code>{search_angel_fut}</code>
-
-📱 <b>F&O SEARCH DETAILS (5Paisa):</b>
-• <b>Option:</b> <code>{search_5p_opt}</code>
+🔍 <b>HOW TO SEARCH IN ANGEL ONE / 5PAISA:</b>
+• <b>Direct Search:</b> <code>{easy_search}</code>
+• <b>Full Contract Name:</b> <code>{angel_search}</code>
 ━━━━━━━━━━━━━━━━━━
 🛡️ <i>Execute after market confirmation. Paper trade first.</i>
 """
@@ -201,7 +191,7 @@ def run_equity_fno_bot():
         except Exception as e:
             print(f"Error scanning {name}: {e}")
 
-    print("✅ Scanning Completed!")
+    print("✅ Equity Scanning Completed Successfully!")
 
 if __name__ == "__main__":
     run_equity_fno_bot()
