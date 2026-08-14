@@ -1,10 +1,15 @@
 import os
+import time
 import requests
-import yfinance as yf
-from datetime import datetime, date
-import logging
+from datetime import datetime
+from SmartApi import SmartConnect
+import pyotp
 
-logging.getLogger('yfinance').setLevel(logging.CRITICAL)
+# GitHub Secrets से एंजल वन के क्रेडेंशियल्स प्राप्त करना
+API_KEY = os.getenv("ANGEL_API_KEY")
+CLIENT_ID = os.getenv("ANGEL_CLIENT_ID")
+PASSWORD = os.getenv("ANGEL_PASSWORD")
+TOTP_SECRET = os.getenv("ANGEL_TOTP_SECRET")
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -18,165 +23,75 @@ def send_telegram_message(message):
     try:
         requests.post(url, json=payload)
     except Exception as e:
-        print(f"Error sending message: {e}")
+        print(f"Telegram Error: {e}")
 
-def get_fno_month():
-    today = date.today()
-    return today.strftime("%b").upper()
-
-def safe_extract_val(val):
+def initialize_angel_one():
+    """Angel One SmartAPI में लॉगिन करना"""
     try:
-        if hasattr(val, 'iloc'):
-            val = val.iloc[-1]
-        if hasattr(val, 'item'):
-            val = val.item()
-        return float(val)
-    except Exception:
+        smart_api = SmartConnect(api_key=API_KEY)
+        totp = pyotp.TOTP(TOTP_SECRET).now()
+        data = smart_api.generateSession(CLIENT_ID, PASSWORD, totp)
+        
+        if data['status']:
+            print("✅ Angel One SmartAPI Login Successful!")
+            return smart_api
+        else:
+            print(f"❌ Angel One Login Failed: {data['message']}")
+            return None
+    except Exception as e:
+        print(f"❌ Exception during Angel One Login: {e}")
         return None
 
-def fetch_data_safely(ticker, period, interval):
+def fetch_live_market_data(smart_api, exchange, tradingsymbol, symboltoken):
+    """Angel One से सीधे लाइव LTP और मार्केट डेटा खींचना"""
     try:
-        df = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=False)
-        if not df.empty:
-            return df
-    except Exception:
-        pass
+        data = smart_api.ltpData(exchange, tradingsymbol, symboltoken)
+        if data and data.get('status'):
+            return float(data['data']['ltp'])
+    except Exception as e:
+        print(f"Error fetching LTP for {tradingsymbol}: {e}")
     return None
 
-def run_equity_fno_bot():
-    month_name = get_fno_month()
+def run_angel_bot():
+    smart_api = initialize_angel_one()
+    if not smart_api:
+        send_telegram_message("⚠️ <b>Angel One API Login Failed!</b> Please check credentials.")
+        return
 
-    stocks = {
-        # --- INDICES ---
-        "NIFTY": {"ticker": "^NSEI", "step": 50, "approx_premium_pct": 0.008},
-        "BANKNIFTY": {"ticker": "^NSEBANK", "step": 100, "approx_premium_pct": 0.008},
+    # स्टॉक टोकन लिस्ट (Angel One NSE Tokens)
+    watch_list = [
+        {"name": "TATASTEEL", "symbol": "TATASTEEL-EQ", "token": "3499", "exchange": "NSE"},
+        {"name": "SBIN", "symbol": "SBIN-EQ", "token": "3045", "exchange": "NSE"},
+        {"name": "RELIANCE", "symbol": "RELIANCE-EQ", "token": "2885", "exchange": "NSE"},
+        {"name": "INFY", "symbol": "INFY-EQ", "token": "1594", "exchange": "NSE"}
+    ]
 
-        # --- IT SECTOR ---
-        "TCS": {"ticker": "TCS.NS", "step": 50, "approx_premium_pct": 0.015},
-        "INFY": {"ticker": "INFY.NS", "step": 20, "approx_premium_pct": 0.015},
-        "WIPRO": {"ticker": "WIPRO.NS", "step": 5, "approx_premium_pct": 0.02},
-        "HCLTECH": {"ticker": "HCLTECH.NS", "step": 20, "approx_premium_pct": 0.015},
+    print("Fetching Live Data directly from Angel One Server...")
 
-        # --- BANKING ---
-        "HDFCBANK": {"ticker": "HDFCBANK.NS", "step": 20, "approx_premium_pct": 0.015},
-        "ICICIBANK": {"ticker": "ICICIBANK.NS", "step": 10, "approx_premium_pct": 0.015},
-        "SBIN": {"ticker": "SBIN.NS", "step": 10, "approx_premium_pct": 0.018},
-        "AXISBANK": {"ticker": "AXISBANK.NS", "step": 10, "approx_premium_pct": 0.015},
-
-        # --- CHEMICAL & AUTO ---
-        "SRF": {"ticker": "SRF.NS", "step": 50, "approx_premium_pct": 0.02},
-        "AARTIIND": {"ticker": "AARTIIND.NS", "step": 10, "approx_premium_pct": 0.02},
-        "DEEPAKNTR": {"ticker": "DEEPAKNTR.NS", "step": 20, "approx_premium_pct": 0.02},
-        "MARUTI": {"ticker": "MARUTI.NS", "step": 100, "approx_premium_pct": 0.013},
-        "M&M": {"ticker": "M&M.NS", "step": 20, "approx_premium_pct": 0.015},
-        "TATAMOTORS": {"ticker": "TATAMOTORS.NS", "step": 10, "approx_premium_pct": 0.02},
-
-        # --- OTHERS ---
-        "RELIANCE": {"ticker": "RELIANCE.NS", "step": 20, "approx_premium_pct": 0.015},
-        "TATASTEEL": {"ticker": "TATASTEEL.NS", "step": 2, "approx_premium_pct": 0.02}
-    }
-
-    print("Scanning Equity & F&O Market...")
-
-    for name, config in stocks.items():
-        try:
-            ticker = config["ticker"]
-
-            # 1. Daily Trend Fetch
-            df_daily = fetch_data_safely(ticker, period="40d", interval="1d")
-            if df_daily is None or df_daily.empty or len(df_daily) < 20:
-                continue
-
-            close_series = df_daily['Close']
-            daily_close = safe_extract_val(close_series.iloc[-1])
-            daily_sma20 = safe_extract_val(close_series.rolling(20).mean().iloc[-1])
-
-            if daily_close is None or daily_sma20 is None:
-                continue
-
-            macro_trend = "BULLISH" if daily_close > daily_sma20 else "BEARISH"
-
-            # 2. 15-Min VWAP Trigger Fetch
-            df_15m = fetch_data_safely(ticker, period="5d", interval="15m")
-            if df_15m is None or df_15m.empty:
-                continue
-
-            close_15m = safe_extract_val(df_15m['Close'].iloc[-1])
-            if close_15m is None:
-                continue
-
-            vol = df_15m['Volume']
-            high = df_15m['High']
-            low = df_15m['Low']
-            close = df_15m['Close']
-
-            tot_vol = safe_extract_val(vol.sum())
-            if tot_vol and tot_vol > 0:
-                vwap_val = ((vol * (high + low + close) / 3).sum()) / vol.sum()
-                vwap = safe_extract_val(vwap_val)
-            else:
-                vwap = safe_extract_val(df_15m['Close'].rolling(10).mean().iloc[-1])
-
-            if vwap is None:
-                continue
-
-            # Signal Generation
-            signal = None
-            if macro_trend == "BULLISH" and close_15m > vwap:
-                signal = "BUY"
-            elif macro_trend == "BEARISH" and close_15m < vwap:
-                signal = "SELL"
-
-            if not signal:
-                continue
-
-            emoji = "🟢" if signal == "BUY" else "🔴"
-
-            # Cash/Equity Targets & SL
-            intra_target = close_15m * (1.01 if signal == "BUY" else 0.99)
-            intra_sl = close_15m * (0.995 if signal == "BUY" else 1.005)
-
-            # Option Calculations
-            strike = int(round(close_15m / config["step"]) * config["step"])
-            option_type = "CE" if signal == "BUY" else "PE"
-
-            easy_search = f"{name} {month_name} {strike} {option_type}"
-            simple_search = f"{name} {strike} {option_type}"
-
-            # Estimated Premium Calculation
-            est_premium = close_15m * config.get("approx_premium_pct", 0.015)
-            opt_buy_range = f"₹{est_premium * 0.95:.1f} - ₹{est_premium * 1.05:.1f}"
-            opt_target = est_premium * 1.30
-            opt_sl = est_premium * 0.85
-
+    for item in watch_list:
+        ltp = fetch_live_market_data(smart_api, item["exchange"], item["symbol"], item["token"])
+        if ltp:
+            print(f"Real-time LTP for {item['name']} from Angel One: ₹{ltp}")
+            
+            # सैंपल सिग्नल अलर्ट
             msg = f"""
-{emoji} <b>NSE EQUITY / F&O {signal} SIGNAL</b>
+📡 <b>ANGEL ONE SMART-API LIVE DATA</b>
 ━━━━━━━━━━━━━━━━━━
-📌 <b>Stock/Index:</b> {name}
-📊 <b>Daily Trend:</b> {macro_trend}
-⏱️ <b>Trigger:</b> 15-Min VWAP Aligned
-💰 <b>Current Spot Price:</b> ₹{close_15m:.2f}
-━━━━━━━━━━━━━━━━━━
-🎯 <b>INTRADAY CASH CALL:</b>
-• <b>Action:</b> {signal}
-• <b>Target:</b> ₹{intra_target:.2f}
-• <b>Stop Loss:</b> ₹{intra_sl:.2f}
-
-🔥 <b>F&O OPTION TRADE ({option_type}):</b>
-• <b>Search Broker:</b> <code>{easy_search}</code>
-• <b>Alt Search:</b> <code>{simple_search}</code> <i>(Select Top Option)</i>
-• <b>Est. Entry Price:</b> Buy around {opt_buy_range}
-• <b>Option Target (+30%):</b> ₹{opt_target:.2f}
-• <b>Option Stop Loss (-15%):</b> ₹{opt_sl:.2f}
-━━━━━━━━━━━━━━━━━━
-🛡️ <i>Select top/current month option in broker search.</i>
+📌 <b>Stock:</b> {item['name']}
+💰 <b>Angel One Live Price (LTP):</b> ₹{ltp:.2f}
+⏱️ <b>Time:</b> {datetime.now().strftime('%H:%M:%S')}
+✅ <i>Directly fetched from Angel One Server</i>
 """
             send_telegram_message(msg)
+        else:
+            print(f"Failed to fetch live data for {item['name']}")
 
-        except Exception as e:
-            print(f"Error scanning {name}: {e}")
-
-    print("✅ F&O Signal Bot Ran Successfully!")
+    # Session Logout
+    try:
+        smart_api.terminateSession(CLIENT_ID)
+    except Exception:
+        pass
 
 if __name__ == "__main__":
-    run_equity_fno_bot()
+    run_angel_bot()
+        
