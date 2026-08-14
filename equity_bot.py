@@ -21,31 +21,10 @@ def send_telegram_message(message):
     except Exception as e:
         print(f"Error sending message: {e}")
 
-def get_fno_expiries():
-    """Current Month Thursday Expiry Format (e.g. 25AUG or AUG)"""
+def get_fno_month():
+    """Returns Current Month Name (e.g. AUG)"""
     today = date.today()
-    year, month = today.year, today.month
-    last_day = calendar.monthrange(year, month)[1]
-    last_thursday = None
-    for day in range(last_day, 0, -1):
-        d = date(year, month, day)
-        if d.weekday() == 3: # Thursday
-            last_thursday = d
-            break
-            
-    if last_thursday < today:
-        month = 1 if month == 12 else month + 1
-        year = year + 1 if month == 1 else year
-        last_day = calendar.monthrange(year, month)[1]
-        for day in range(last_day, 0, -1):
-            d = date(year, month, day)
-            if d.weekday() == 3:
-                last_thursday = d
-                break
-
-    # e.g., 25AUG
-    stock_exp_short = last_thursday.strftime("%d%b").upper() 
-    return stock_exp_short
+    return today.strftime("%b").upper()
 
 def safe_extract_val(val):
     try:
@@ -67,7 +46,7 @@ def fetch_data_safely(ticker, period, interval):
     return None
 
 def run_equity_fno_bot():
-    stock_exp_short = get_fno_expiries()
+    month_name = get_fno_month()
 
     stocks = {
         # --- INDICES ---
@@ -163,8 +142,8 @@ def run_equity_fno_bot():
             strike = int(round(close_15m / config["step"]) * config["step"])
             option_type = "CE" if signal == "BUY" else "PE"
 
-            # Search with Expiry Tag for Exact Match
-            easy_search = f"{name} {stock_exp_short} {strike} {option_type}"
+            # Perfect Search Keyword for 5paisa & Angel One
+            easy_search = f"{name} {month_name} {strike} {option_type}"
             simple_search = f"{name} {strike} {option_type}"
 
             # Estimated Premium Calculation
@@ -188,12 +167,12 @@ def run_equity_fno_bot():
 
 🔥 <b>F&O OPTION TRADE ({option_type}):</b>
 • <b>Search Broker:</b> <code>{easy_search}</code>
-• <b>Alt Search:</b> <code>{simple_search}</code> <i>(Select Top/Current Expiry)</i>
+• <b>Alt Search:</b> <code>{simple_search}</code> <i>(Select Top Option)</i>
 • <b>Est. Entry Price:</b> Buy around {opt_buy_range}
 • <b>Option Target (+30%):</b> ₹{opt_target:.2f}
 • <b>Option Stop Loss (-15%):</b> ₹{opt_sl:.2f}
 ━━━━━━━━━━━━━━━━━━
-🛡️ <i>Always select the Current Month Expiry in your broker app.</i>
+🛡️ <i>Select top/current month option in broker search.</i>
 """
             send_telegram_message(msg)
 
