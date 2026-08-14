@@ -1,111 +1,236 @@
-import os
-import requests
-import yfinance as yf
-import pandas as pd
-from datetime import datetime
+stocks_data = {
+    # ==========================================
+    # --- NIFTY BANK / FINANCIALS ---
+    # ==========================================
+    "HDFCBANK": {
+        "ticker": "HDFCBANK.NS",
+        "factor": 1.0,
+        "strike_step": 10,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.015, "has_option": True
+    },
+    "ICICIBANK": {
+        "ticker": "ICICIBANK.NS",
+        "factor": 1.0,
+        "strike_step": 10,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.015, "has_option": True
+    },
+    "SBIN": {
+        "ticker": "SBIN.NS",
+        "factor": 1.0,
+        "strike_step": 5,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.015, "has_option": True
+    },
+    "PNB": {
+        "ticker": "PNB.NS",
+        "factor": 1.0,
+        "strike_step": 2,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.020, "has_option": True
+    },
+    "KOTAKBANK": {
+        "ticker": "KOTAKBANK.NS",
+        "factor": 1.0,
+        "strike_step": 20,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.015, "has_option": True
+    },
+    "AXISBANK": {
+        "ticker": "AXISBANK.NS",
+        "factor": 1.0,
+        "strike_step": 10,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.015, "has_option": True
+    },
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+    # ==========================================
+    # --- IT SECTOR ---
+    # ==========================================
+    "TCS": {
+        "ticker": "TCS.NS",
+        "factor": 1.0,
+        "strike_step": 20,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.015, "has_option": True
+    },
+    "INFY": {
+        "ticker": "INFY.NS",
+        "factor": 1.0,
+        "strike_step": 10,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.015, "has_option": True
+    },
+    "WIPRO": {
+        "ticker": "WIPRO.NS",
+        "factor": 1.0,
+        "strike_step": 5,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.020, "has_option": True
+    },
+    "HCLTECH": {
+        "ticker": "HCLTECH.NS",
+        "factor": 1.0,
+        "strike_step": 10,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.015, "has_option": True
+    },
+    "TECHM": {
+        "ticker": "TECHM.NS",
+        "factor": 1.0,
+        "strike_step": 10,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.020, "has_option": True
+    },
 
-def send_telegram_message(message):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
-    try:
-        requests.post(url, json=payload)
-    except Exception as e:
-        print(f"Error sending message: {e}")
+    # ==========================================
+    # --- CHEMICAL SECTOR ---
+    # ==========================================
+    "AARTIIND": {
+        "ticker": "AARTIIND.NS",
+        "factor": 1.0,
+        "strike_step": 10,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.025, "has_option": True
+    },
+    "SRF": {
+        "ticker": "SRF.NS",
+        "factor": 1.0,
+        "strike_step": 20,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.020, "has_option": True
+    },
+    "PIIND": {
+        "ticker": "PIIND.NS",
+        "factor": 1.0,
+        "strike_step": 50,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.020, "has_option": True
+    },
+    "ATUL": {
+        "ticker": "ATUL.NS",
+        "factor": 1.0,
+        "strike_step": 50,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.020, "has_option": True
+    },
+    "DEEPAKNTR": {
+        "ticker": "DEEPAKNTR.NS",
+        "factor": 1.0,
+        "strike_step": 20,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.025, "has_option": True
+    },
+    "UPL": {
+        "ticker": "UPL.NS",
+        "factor": 1.0,
+        "strike_step": 10,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.025, "has_option": True
+    },
 
-def get_expiry_format():
-    now = datetime.now()
-    months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
-    return f"{months[now.month - 1]}{now.strftime('%y')}"
-
-def run_equity_bot():
-    symbols = {
-        "NIFTY 50": "^NSEI",
-        "BANKNIFTY": "^NSEBANK",
-        "TATAMOTORS": "TATAMOTORS.NS",
-        "RELIANCE": "RELIANCE.NS",
-        "INFY": "INFY.NS",
-        "TCS": "TCS.NS"
+    # ==========================================
+    # --- NIFTY 50 KEY HEAVYWEIGHTS / NIFTY 100 ---
+    # ==========================================
+    "RELIANCE": {
+        "ticker": "RELIANCE.NS",
+        "factor": 1.0,
+        "strike_step": 10,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.015, "has_option": True
+    },
+    "LT": {
+        "ticker": "LT.NS",
+        "factor": 1.0,
+        "strike_step": 20,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.015, "has_option": True
+    },
+    "TATAMOTORS": {
+        "ticker": "TATAMOTORS.NS",
+        "factor": 1.0,
+        "strike_step": 10,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.020, "has_option": True
+    },
+    "TATASTEEL": {
+        "ticker": "TATASTEEL.NS",
+        "factor": 1.0,
+        "strike_step": 2,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.020, "has_option": True
+    },
+    "BHARTIARTL": {
+        "ticker": "BHARTIARTL.NS",
+        "factor": 1.0,
+        "strike_step": 10,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.015, "has_option": True
+    },
+    "ITC": {
+        "ticker": "ITC.NS",
+        "factor": 1.0,
+        "strike_step": 5,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.015, "has_option": True
+    },
+    "MARUTI": {
+        "ticker": "MARUTI.NS",
+        "factor": 1.0,
+        "strike_step": 100,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.015, "has_option": True
+    },
+    "SUNPHARMA": {
+        "ticker": "SUNPHARMA.NS",
+        "factor": 1.0,
+        "strike_step": 10,
+        "opt_exp_angel": "27-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "27 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.015, "has_option": True
+    },
+    "NIFTY50_INDEX": {
+        "ticker": "^NSEI",
+        "factor": 1.0,
+        "strike_step": 50,
+        "opt_exp_angel": "20-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "20 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.010, "has_option": True
+    },
+    "BANKNIFTY_INDEX": {
+        "ticker": "^NSEBANK",
+        "factor": 1.0,
+        "strike_step": 100,
+        "opt_exp_angel": "20-AUG-26", "fut_exp_angel": "27-AUG-26",
+        "opt_exp_5p": "20 AUG 2026", "fut_exp_5p": "27 AUG 2026",
+        "prem_pct": 0.010, "has_option": True
     }
-    
-    expiry = get_expiry_format()
+}
 
-    for name, ticker in symbols.items():
-        try:
-            # 1. Fetch Daily Data (1D) for Overall Trend
-            df_daily = yf.download(ticker, period="30d", interval="1d", progress=False)
-            if df_daily.empty:
-                continue
-            
-            daily_close = df_daily['Close'].iloc[-1].item() if hasattr(df_daily['Close'].iloc[-1], 'item') else float(df_daily['Close'].iloc[-1])
-            daily_sma20 = df_daily['Close'].rolling(20).mean().iloc[-1].item() if hasattr(df_daily['Close'].rolling(20).mean().iloc[-1], 'item') else float(df_daily['Close'].rolling(20).mean().iloc[-1])
-            
-            # Determine Macro Trend
-            macro_trend = "BULLISH" if daily_close > daily_sma20 else "BEARISH"
-
-            # 2. Fetch 15-Minute Data for Entry Trigger
-            df_15m = yf.download(ticker, period="5d", interval="15m", progress=False)
-            if df_15m.empty:
-                continue
-                
-            close_15m = df_15m['Close'].iloc[-1].item() if hasattr(df_15m['Close'].iloc[-1], 'item') else float(df_15m['Close'].iloc[-1])
-            
-            # Simple VWAP Calculation
-            vol = df_15m['Volume']
-            high = df_15m['High']
-            low = df_15m['Low']
-            close = df_15m['Close']
-            vwap = ((vol * (high + low + close) / 3).sum() / vol.sum())
-            vwap = vwap.item() if hasattr(vwap, 'item') else float(vwap)
-
-            # 3. Multi-Timeframe Alignment Logic
-            signal = None
-            if macro_trend == "BULLISH" and close_15m > vwap:
-                signal = "BUY"
-            elif macro_trend == "BEARISH" and close_15m < vwap:
-                signal = "SELL"
-            
-            # Skip if 1D Trend and 15M Signal don't match
-            if not signal:
-                continue
-
-            # Trade Type Categorization
-            trade_category = "INTRADAY" if "NIFTY" in name or "BANK" in name else "INTRADAY / DELIVERY"
-            emoji = "🟢" if signal == "BUY" else "🔴"
-            
-            # Option Strike Calculation
-            step = 100 if "BANK" in name else (50 if "NIFTY" in name else 10)
-            strike = round(close_15m / step) * step
-            option_type = "CE" if signal == "BUY" else "PE"
-
-            target = close_15m * 1.015 if signal == "BUY" else close_15m * 0.985
-            sl = close_15m * 0.992 if signal == "BUY" else close_15m * 1.008
-
-            msg = f"""
-{emoji} <b>NSE {signal} SIGNAL (MULTITIMEFRAME CONFIRMED)</b>
-━━━━━━━━━━━━━━━━━━
-📊 <b>Overall Day Trend:</b> {macro_trend} 📈
-⏱️ <b>Trigger:</b> 15-Min VWAP Aligned
-🏷️ <b>Category:</b> <b>{trade_category}</b>
-━━━━━━━━━━━━━━━━━━
-📌 <b>Asset:</b> {name}
-🔍 <b>Angel One Search:</b> <code>{name} {expiry} FUT</code>
-💡 <b>Option Buyers:</b> <code>{name} {strike} {option_type}</code>
-━━━━━━━━━━━━━━━━━━
-💰 <b>Entry:</b> ₹{close_15m:.2f}
-🎯 <b>Target:</b> ₹{target:.2f}
-🛑 <b>Stop Loss:</b> ₹{sl:.2f}
-━━━━━━━━━━━━━━━━━━
-🛡️ <i>Daily & 15M Trend Matched. Paper trade first.</i>
-"""
-            send_telegram_message(msg)
-
-        except Exception as e:
-            print(f"Error scanning {name}: {e}")
-
-if __name__ == "__main__":
-    run_equity_bot()
+# आप दोनों Dictionaries (Commodities और Stocks) को ऐसे मर्ज (Merge) कर सकते हैं:
+master_dict = {**commodities, **stocks_data}
