@@ -3,6 +3,10 @@ import requests
 import yfinance as yf
 from datetime import datetime, date
 import calendar
+import logging
+
+# Yahoo Finance ke faltu 404 warnings ko hide karne ke liye
+logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -53,6 +57,16 @@ def safe_extract_val(val):
     except Exception:
         return None
 
+def fetch_data_safely(ticker, period, interval):
+    """Yahoo Finance 404 Error Suppressor & Downloader"""
+    try:
+        df = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=False)
+        if not df.empty:
+            return df
+    except Exception:
+        pass
+    return None
+
 def run_equity_fno_bot():
     stock_exp_angel = get_fno_expiries()
 
@@ -70,7 +84,7 @@ def run_equity_fno_bot():
         # --- BANKING ---
         "HDFCBANK": {"ticker": "HDFCBANK.NS", "step": 20, "approx_premium_pct": 0.015},
         "ICICIBANK": {"ticker": "ICICIBANK.NS", "step": 10, "approx_premium_pct": 0.015},
-        "SBIN": {"ticker": "SBIN.NS", "step": 10, "is_fno": True, "approx_premium_pct": 0.018},
+        "SBIN": {"ticker": "SBIN.NS", "step": 10, "approx_premium_pct": 0.018},
         "AXISBANK": {"ticker": "AXISBANK.NS", "step": 10, "approx_premium_pct": 0.015},
 
         # --- CHEMICAL & AUTO ---
@@ -92,9 +106,9 @@ def run_equity_fno_bot():
         try:
             ticker = config["ticker"]
 
-            # 1. Daily Trend
-            df_daily = yf.download(ticker, period="40d", interval="1d", auto_adjust=False, progress=False)
-            if df_daily.empty or len(df_daily) < 20:
+            # 1. Daily Trend Fetch
+            df_daily = fetch_data_safely(ticker, period="40d", interval="1d")
+            if df_daily is None or df_daily.empty or len(df_daily) < 20:
                 continue
 
             close_series = df_daily['Close']
@@ -106,9 +120,9 @@ def run_equity_fno_bot():
 
             macro_trend = "BULLISH" if daily_close > daily_sma20 else "BEARISH"
 
-            # 2. 15-Min VWAP Trigger
-            df_15m = yf.download(ticker, period="5d", interval="15m", auto_adjust=False, progress=False)
-            if df_15m.empty:
+            # 2. 15-Min VWAP Trigger Fetch
+            df_15m = fetch_data_safely(ticker, period="5d", interval="15m")
+            if df_15m is None or df_15m.empty:
                 continue
 
             close_15m = safe_extract_val(df_15m['Close'].iloc[-1])
@@ -146,12 +160,12 @@ def run_equity_fno_bot():
             intra_target = close_15m * (1.01 if signal == "BUY" else 0.99)
             intra_sl = close_15m * (0.995 if signal == "BUY" else 1.005)
 
-            # Option Calculations (CE for BUY, PE for SELL)
+            # Option Calculations
             strike = int(round(close_15m / config["step"]) * config["step"])
             option_type = "CE" if signal == "BUY" else "PE"
             easy_search = f"{name} {strike} {option_type}"
 
-            # Estimated Premium Calculation (ATM Price Estimation)
+            # Estimated Premium Calculation
             est_premium = close_15m * config.get("approx_premium_pct", 0.015)
             opt_buy_range = f"₹{est_premium * 0.95:.1f} - ₹{est_premium * 1.05:.1f}"
             opt_target = est_premium * 1.30  # +30% Target
@@ -187,3 +201,4 @@ def run_equity_fno_bot():
 
 if __name__ == "__main__":
     run_equity_fno_bot()
+    
