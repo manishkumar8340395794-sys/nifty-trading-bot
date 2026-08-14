@@ -3,6 +3,7 @@ import requests
 import yfinance as yf
 from datetime import datetime, date
 import calendar
+import time
 import logging
 
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
@@ -21,8 +22,10 @@ def send_telegram_message(message):
     except Exception as e:
         print(f"Error sending message: {e}")
 
+# सक्रिय ट्रेड्स को स्टोर करने के लिए (Active Positions Storage)
+active_positions = {}
+
 def get_fno_month():
-    """Returns Current Month Name (e.g. AUG)"""
     today = date.today()
     return today.strftime("%b").upper()
 
@@ -36,71 +39,79 @@ def safe_extract_val(val):
     except Exception:
         return None
 
-def fetch_data_safely(ticker, period, interval):
+def fetch_live_price(ticker):
+    """हर कुछ सेकंड में लाइव प्राइस लाने का फ़ंक्शन"""
     try:
-        df = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=False)
+        df = yf.Ticker(ticker).history(period="1d", interval="1m", auto_adjust=False)
         if not df.empty:
-            return df
+            return safe_extract_val(df['Close'].iloc[-1])
     except Exception:
         pass
     return None
 
-def run_equity_fno_bot():
+def track_live_positions():
+    """सक्रिय ट्रेड्स की हर 10 सेकंड में चेकिंग"""
+    global active_positions
+    if not active_positions:
+        return
+
+    print("🔍 Tracking active positions live...")
+    for symbol, trade in list(active_positions.items()):
+        current_price = fetch_live_price(trade["ticker"])
+        if current_price is None:
+            continue
+
+        # Target Check
+        if (trade["signal"] == "BUY" and current_price >= trade["target"]) or \
+           (trade["signal"] == "SELL" and current_price <= trade["target"]):
+            
+            msg = f"""
+🎯 <b>TARGET ACHIEVED ALERT!</b>
+━━━━━━━━━━━━━━━━━━
+📌 <b>Stock:</b> {symbol}
+📊 <b>Type:</b> {trade['signal']}
+💰 <b>Entry Price:</b> ₹{trade['entry']:.2f}
+🚀 <b>Current Price:</b> ₹{current_price:.2f}
+🎯 <b>Target Price:</b> ₹{trade['target']:.2f}
+✅ <i>Profit booked successfully!</i>
+"""
+            send_telegram_message(msg)
+            del active_positions[symbol]  # ट्रेड क्लोज कर दें
+
+        # Stop Loss Check
+        elif (trade["signal"] == "BUY" and current_price <= trade["sl"]) or \
+             (trade["signal"] == "SELL" and current_price >= trade["sl"]):
+            
+            msg = f"""
+🚨 <b>STOP LOSS HIT ALERT!</b>
+━━━━━━━━━━━━━━━━━━
+📌 <b>Stock:</b> {symbol}
+📊 <b>Type:</b> {trade['signal']}
+💰 <b>Entry Price:</b> ₹{trade['entry']:.2f}
+🔻 <b>Current Price:</b> ₹{current_price:.2f}
+🛑 <b>Stop Loss Price:</b> ₹{trade['sl']:.2f}
+⚠️ <i>Exit position immediately to prevent losses!</i>
+"""
+            send_telegram_message(msg)
+            del active_positions[symbol]  # ट्रेड क्लोज कर दें
+
+def scan_for_new_signals():
+    """नये सिग्नल्स खोजना"""
     month_name = get_fno_month()
-
     stocks = {
-        # --- INDICES ---
-        "NIFTY": {"ticker": "^NSEI", "step": 50, "approx_premium_pct": 0.008},
-        "BANKNIFTY": {"ticker": "^NSEBANK", "step": 100, "approx_premium_pct": 0.008},
-
-        # --- IT SECTOR ---
-        "TCS": {"ticker": "TCS.NS", "step": 50, "approx_premium_pct": 0.015},
-        "INFY": {"ticker": "INFY.NS", "step": 20, "approx_premium_pct": 0.015},
-        "WIPRO": {"ticker": "WIPRO.NS", "step": 5, "approx_premium_pct": 0.02},
-        "HCLTECH": {"ticker": "HCLTECH.NS", "step": 20, "approx_premium_pct": 0.015},
-
-        # --- BANKING ---
-        "HDFCBANK": {"ticker": "HDFCBANK.NS", "step": 20, "approx_premium_pct": 0.015},
-        "ICICIBANK": {"ticker": "ICICIBANK.NS", "step": 10, "approx_premium_pct": 0.015},
+        "TATASTEEL": {"ticker": "TATASTEEL.NS", "step": 2, "approx_premium_pct": 0.02},
         "SBIN": {"ticker": "SBIN.NS", "step": 10, "approx_premium_pct": 0.018},
-        "AXISBANK": {"ticker": "AXISBANK.NS", "step": 10, "approx_premium_pct": 0.015},
-
-        # --- CHEMICAL & AUTO ---
-        "SRF": {"ticker": "SRF.NS", "step": 50, "approx_premium_pct": 0.02},
-        "AARTIIND": {"ticker": "AARTIIND.NS", "step": 10, "approx_premium_pct": 0.02},
-        "DEEPAKNTR": {"ticker": "DEEPAKNTR.NS", "step": 20, "approx_premium_pct": 0.02},
-        "MARUTI": {"ticker": "MARUTI.NS", "step": 100, "approx_premium_pct": 0.013},
-        "M&M": {"ticker": "M&M.NS", "step": 20, "approx_premium_pct": 0.015},
-        "TATAMOTORS": {"ticker": "TATAMOTORS.NS", "step": 10, "approx_premium_pct": 0.02},
-
-        # --- OTHERS ---
-        "RELIANCE": {"ticker": "RELIANCE.NS", "step": 20, "approx_premium_pct": 0.015},
-        "TATASTEEL": {"ticker": "TATASTEEL.NS", "step": 2, "approx_premium_pct": 0.02}
+        "RELIANCE": {"ticker": "RELIANCE.NS", "step": 20, "approx_premium_pct": 0.015}
     }
 
-    print("Scanning Equity & F&O Market...")
-
     for name, config in stocks.items():
+        if name in active_positions:
+            continue  # अगर इसका ट्रेड पहले से एक्टिव है तो दुबारा सिग्नल न बनाएँ
+
         try:
             ticker = config["ticker"]
-
-            # 1. Daily Trend Fetch
-            df_daily = fetch_data_safely(ticker, period="40d", interval="1d")
-            if df_daily is None or df_daily.empty or len(df_daily) < 20:
-                continue
-
-            close_series = df_daily['Close']
-            daily_close = safe_extract_val(close_series.iloc[-1])
-            daily_sma20 = safe_extract_val(close_series.rolling(20).mean().iloc[-1])
-
-            if daily_close is None or daily_sma20 is None:
-                continue
-
-            macro_trend = "BULLISH" if daily_close > daily_sma20 else "BEARISH"
-
-            # 2. 15-Min VWAP Trigger Fetch
-            df_15m = fetch_data_safely(ticker, period="5d", interval="15m")
-            if df_15m is None or df_15m.empty:
+            df_15m = yf.Ticker(ticker).history(period="5d", interval="15m", auto_adjust=False)
+            if df_15m.empty:
                 continue
 
             close_15m = safe_extract_val(df_15m['Close'].iloc[-1])
@@ -111,75 +122,60 @@ def run_equity_fno_bot():
             high = df_15m['High']
             low = df_15m['Low']
             close = df_15m['Close']
-
-            tot_vol = safe_extract_val(vol.sum())
-            if tot_vol and tot_vol > 0:
-                vwap_val = ((vol * (high + low + close) / 3).sum()) / vol.sum()
-                vwap = safe_extract_val(vwap_val)
-            else:
-                vwap = safe_extract_val(df_15m['Close'].rolling(10).mean().iloc[-1])
+            vwap = safe_extract_val(((vol * (high + low + close) / 3).sum()) / vol.sum())
 
             if vwap is None:
                 continue
 
-            # Signal Generation
-            signal = None
-            if macro_trend == "BULLISH" and close_15m > vwap:
-                signal = "BUY"
-            elif macro_trend == "BEARISH" and close_15m < vwap:
-                signal = "SELL"
-
-            if not signal:
-                continue
-
+            signal = "BUY" if close_15m > vwap else "SELL"
             emoji = "🟢" if signal == "BUY" else "🔴"
 
-            # Cash/Equity Targets & SL
             intra_target = close_15m * (1.01 if signal == "BUY" else 0.99)
             intra_sl = close_15m * (0.995 if signal == "BUY" else 1.005)
 
-            # Option Calculations
-            strike = int(round(close_15m / config["step"]) * config["step"])
-            option_type = "CE" if signal == "BUY" else "PE"
-
-            # Perfect Search Keyword for 5paisa & Angel One
-            easy_search = f"{name} {month_name} {strike} {option_type}"
-            simple_search = f"{name} {strike} {option_type}"
-
-            # Estimated Premium Calculation
-            est_premium = close_15m * config.get("approx_premium_pct", 0.015)
-            opt_buy_range = f"₹{est_premium * 0.95:.1f} - ₹{est_premium * 1.05:.1f}"
-            opt_target = est_premium * 1.30  # +30% Target
-            opt_sl = est_premium * 0.85      # -15% Stop Loss
+            # पोजीशन को लाइव ट्रैकिंग सूची में जोड़ें
+            active_positions[name] = {
+                "ticker": ticker,
+                "signal": signal,
+                "entry": close_15m,
+                "target": intra_target,
+                "sl": intra_sl
+            }
 
             msg = f"""
-{emoji} <b>NSE EQUITY / F&O {signal} SIGNAL</b>
+{emoji} <b>NEW {signal} SIGNAL GENERATED</b>
 ━━━━━━━━━━━━━━━━━━
-📌 <b>Stock/Index:</b> {name}
-📊 <b>Daily Trend:</b> {macro_trend}
-⏱️ <b>Trigger:</b> 15-Min VWAP Aligned
-💰 <b>Current Spot Price:</b> ₹{close_15m:.2f}
-━━━━━━━━━━━━━━━━━━
-🎯 <b>INTRADAY CASH CALL:</b>
-• <b>Action:</b> {signal}
-• <b>Target:</b> ₹{intra_target:.2f}
-• <b>Stop Loss:</b> ₹{intra_sl:.2f}
-
-🔥 <b>F&O OPTION TRADE ({option_type}):</b>
-• <b>Search Broker:</b> <code>{easy_search}</code>
-• <b>Alt Search:</b> <code>{simple_search}</code> <i>(Select Top Option)</i>
-• <b>Est. Entry Price:</b> Buy around {opt_buy_range}
-• <b>Option Target (+30%):</b> ₹{opt_target:.2f}
-• <b>Option Stop Loss (-15%):</b> ₹{opt_sl:.2f}
-━━━━━━━━━━━━━━━━━━
-🛡️ <i>Select top/current month option in broker search.</i>
+📌 <b>Stock:</b> {name}
+💰 <b>Entry Spot Price:</b> ₹{close_15m:.2f}
+🎯 <b>Target:</b> ₹{intra_target:.2f}
+🛑 <b>Stop Loss:</b> ₹{intra_sl:.2f}
+⚡ <i>Live Real-Time Monitoring Started...</i>
 """
             send_telegram_message(msg)
 
         except Exception as e:
             print(f"Error scanning {name}: {e}")
 
-    print("✅ F&O Signal Bot Ran Successfully!")
-
+# Continuous Live Execution Loop
 if __name__ == "__main__":
-    run_equity_fno_bot()
+    print("🚀 LIVE REAL-TIME TRACKER RUNNING...")
+    scan_counter = 0
+
+    while True:
+        try:
+            # 1. हर 10 सेकंड में एक्टिव पोजीशन्स का रेट लाइव चेक करो
+            track_live_positions()
+
+            # 2. हर 5 मिनट (300 सेकंड) में नये मार्केट सिग्नल्स स्कैन करो
+            if scan_counter % 30 == 0:
+                scan_for_new_signals()
+
+            scan_counter += 1
+            time.sleep(10)  # 10 सेकंड का डिले
+
+        except KeyboardInterrupt:
+            print("Bot stopped by user.")
+            break
+        except Exception as e:
+            print(f"Live Tracking Error: {e}")
+            time.sleep(10)
