@@ -32,7 +32,6 @@ def get_current_expiry():
         d = date(year, month, day)
         if d.weekday() == 3: # 3 = Thursday
             if d < today:
-                # अगर इस महीने की एक्सपायरी बीत गई है तो अगले महीने की एक्सपायरी
                 if month == 12:
                     month = 1
                     year += 1
@@ -44,46 +43,63 @@ def get_current_expiry():
             fivep_fmt = d.strftime("%d %b %Y").upper() # Ex: 27 AUG 2026
             return angel_fmt, fivep_fmt
 
+def safe_extract_val(val):
+    """Pandas Series / Float conversion issue fix"""
+    try:
+        if hasattr(val, 'iloc'):
+            val = val.iloc[-1]
+        if hasattr(val, 'item'):
+            val = val.item()
+        return float(val)
+    except Exception:
+        return None
+
 def run_equity_fno_bot():
-    angel_exp, fivep_exp = get_current_expiry()
+    expiry_dates = get_current_expiry()
+    if not expiry_dates:
+        angel_exp, fivep_exp = "EXPIRY", "EXPIRY"
+    else:
+        angel_exp, fivep_exp = expiry_dates
 
     # Nifty 50, Bank Nifty & Major Sectoral Stocks List
     stocks = {
         # --- INDICES ---
-        "NIFTY": {"ticker": "^NSEI", "step": 50, "is_fno": True, "type": "INDEX"},
-        "BANKNIFTY": {"ticker": "^NSEBANK", "step": 100, "is_fno": True, "type": "INDEX"},
+        "NIFTY": {"ticker": "^NSEI", "step": 50, "is_fno": True},
+        "BANKNIFTY": {"ticker": "^NSEBANK", "step": 100, "is_fno": True},
 
         # --- IT SECTOR ---
-        "TCS": {"ticker": "TCS.NS", "step": 50, "is_fno": True, "type": "EQUITY"},
-        "INFY": {"ticker": "INFY.NS", "step": 20, "is_fno": True, "type": "EQUITY"},
-        "WIPRO": {"ticker": "WIPRO.NS", "step": 10, "is_fno": True, "type": "EQUITY"},
-        "HCLTECH": {"ticker": "HCLTECH.NS", "step": 20, "is_fno": True, "type": "EQUITY"},
-        "TECHM": {"ticker": "TECHM.NS", "step": 20, "is_fno": True, "type": "EQUITY"},
+        "TCS": {"ticker": "TCS.NS", "step": 50, "is_fno": True},
+        "INFY": {"ticker": "INFY.NS", "step": 20, "is_fno": True},
+        "WIPRO": {"ticker": "WIPRO.NS", "step": 10, "is_fno": True},
+        "HCLTECH": {"ticker": "HCLTECH.NS", "step": 20, "is_fno": True},
+        "TECHM": {"ticker": "TECHM.NS", "step": 20, "is_fno": True},
 
         # --- BANKING & FINANCE ---
-        "HDFCBANK": {"ticker": "HDFCBANK.NS", "step": 20, "is_fno": True, "type": "EQUITY"},
-        "ICICIBANK": {"ticker": "ICICIBANK.NS", "step": 20, "is_fno": True, "type": "EQUITY"},
-        "SBIN": {"ticker": "SBIN.NS", "step": 10, "is_fno": True, "type": "EQUITY"},
-        "KOTAKBANK": {"ticker": "KOTAKBANK.NS", "step": 20, "is_fno": True, "type": "EQUITY"},
-        "AXISBANK": {"ticker": "AXISBANK.NS", "step": 20, "is_fno": True, "type": "EQUITY"},
+        "HDFCBANK": {"ticker": "HDFCBANK.NS", "step": 20, "is_fno": True},
+        "ICICIBANK": {"ticker": "ICICIBANK.NS", "step": 20, "is_fno": True},
+        "SBIN": {"ticker": "SBIN.NS", "step": 10, "is_fno": True},
+        "KOTAKBANK": {"ticker": "KOTAKBANK.NS", "step": 20, "is_fno": True},
+        "AXISBANK": {"ticker": "AXISBANK.NS", "step": 20, "is_fno": True},
 
         # --- CHEMICAL SECTOR ---
-        "SRF": {"ticker": "SRF.NS", "step": 50, "is_fno": True, "type": "EQUITY"},
-        "AARTIIND": {"ticker": "AARTIIND.NS", "step": 10, "is_fno": True, "type": "EQUITY"},
-        "ATUL": {"ticker": "ATUL.NS", "step": 100, "is_fno": True, "type": "EQUITY"},
-        "DEEPAKNTR": {"ticker": "DEEPAKNTR.NS", "step": 20, "is_fno": True, "type": "EQUITY"},
-        "UPL": {"ticker": "UPL.NS", "step": 10, "is_fno": True, "type": "EQUITY"},
+        "SRF": {"ticker": "SRF.NS", "step": 50, "is_fno": True},
+        "AARTIIND": {"ticker": "AARTIIND.NS", "step": 10, "is_fno": True},
+        "ATUL": {"ticker": "ATUL.NS", "step": 100, "is_fno": True},
+        "DEEPAKNTR": {"ticker": "DEEPAKNTR.NS", "step": 20, "is_fno": True},
+        "UPL": {"ticker": "UPL.NS", "step": 10, "is_fno": True},
 
         # --- AUTO SECTOR ---
-        "TATAMOTORS": {"ticker": "TATAMOTORS.NS", "step": 10, "is_fno": True, "type": "EQUITY"},
-        "MARUTI": {"ticker": "MARUTI.NS", "step": 100, "is_fno": True, "type": "EQUITY"},
-        "M&M": {"ticker": "M&M.NS", "step": 20, "is_fno": True, "type": "EQUITY"},
+        "MARUTI": {"ticker": "MARUTI.NS", "step": 100, "is_fno": True},
+        "M&M": {"ticker": "M&M.NS", "step": 20, "is_fno": True},
+        "TATAMOTORS": {"ticker": "TATAMOTORS.NS", "step": 10, "is_fno": True},
 
         # --- PHARMA & METALS ---
-        "SUNPHARMA": {"ticker": "SUNPHARMA.NS", "step": 20, "is_fno": True, "type": "EQUITY"},
-        "TATASTEEL": {"ticker": "TATASTEEL.NS", "step": 2.5, "is_fno": True, "type": "EQUITY"},
-        "RELIANCE": {"ticker": "RELIANCE.NS", "step": 20, "is_fno": True, "type": "EQUITY"}
+        "SUNPHARMA": {"ticker": "SUNPHARMA.NS", "step": 20, "is_fno": True},
+        "TATASTEEL": {"ticker": "TATASTEEL.NS", "step": 2.5, "is_fno": True},
+        "RELIANCE": {"ticker": "RELIANCE.NS", "step": 20, "is_fno": True}
     }
+
+    print("Scanning Market with Multi-Timeframe Analysis...")
 
     for name, config in stocks.items():
         try:
@@ -91,11 +107,16 @@ def run_equity_fno_bot():
 
             # 1. Daily Trend Analysis
             df_daily = yf.download(ticker, period="30d", interval="1d", progress=False)
-            if df_daily.empty:
+            if df_daily.empty or len(df_daily) < 20:
                 continue
 
-            daily_close = float(df_daily['Close'].iloc[-1].item() if hasattr(df_daily['Close'].iloc[-1], 'item') else df_daily['Close'].iloc[-1])
-            daily_sma20 = float(df_daily['Close'].rolling(20).mean().iloc[-1].item() if hasattr(df_daily['Close'].rolling(20).mean().iloc[-1], 'item') else df_daily['Close'].rolling(20).mean().iloc[-1])
+            close_series = df_daily['Close']
+            daily_close = safe_extract_val(close_series.iloc[-1])
+            daily_sma20 = safe_extract_val(close_series.rolling(20).mean().iloc[-1])
+
+            if daily_close is None or daily_sma20 is None:
+                continue
+
             macro_trend = "BULLISH" if daily_close > daily_sma20 else "BEARISH"
 
             # 2. 15-Min VWAP Trigger
@@ -103,17 +124,25 @@ def run_equity_fno_bot():
             if df_15m.empty:
                 continue
 
-            close_15m = float(df_15m['Close'].iloc[-1].item() if hasattr(df_15m['Close'].iloc[-1], 'item') else df_15m['Close'].iloc[-1])
+            close_15m = safe_extract_val(df_15m['Close'].iloc[-1])
+            if close_15m is None:
+                continue
+
             vol = df_15m['Volume']
             high = df_15m['High']
             low = df_15m['Low']
             close = df_15m['Close']
 
-            # Check for non-zero volume (Indices like Nifty don't have direct volume in yfinance)
-            if vol.sum() > 0:
-                vwap = float(((vol * (high + low + close) / 3).sum() / vol.sum()).item() if hasattr(((vol * (high + low + close) / 3).sum() / vol.sum()), 'item') else ((vol * (high + low + close) / 3).sum() / vol.sum()))
+            # VWAP Calculation Safely
+            tot_vol = safe_extract_val(vol.sum())
+            if tot_vol and tot_vol > 0:
+                vwap_val = ((vol * (high + low + close) / 3).sum()) / vol.sum()
+                vwap = safe_extract_val(vwap_val)
             else:
-                vwap = float(df_15m['Close'].rolling(10).mean().iloc[-1].item() if hasattr(df_15m['Close'].rolling(10).mean().iloc[-1], 'item') else df_15m['Close'].rolling(10).mean().iloc[-1])
+                vwap = safe_extract_val(df_15m['Close'].rolling(10).mean().iloc[-1])
+
+            if vwap is None:
+                continue
 
             # Signal Logic
             signal = None
@@ -171,6 +200,8 @@ def run_equity_fno_bot():
 
         except Exception as e:
             print(f"Error scanning {name}: {e}")
+
+    print("✅ Scanning Completed!")
 
 if __name__ == "__main__":
     run_equity_fno_bot()
