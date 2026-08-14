@@ -1,7 +1,7 @@
 import os
 import requests
 import yfinance as yf
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 import calendar
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -19,10 +19,8 @@ def send_telegram_message(message):
         print(f"Error sending message: {e}")
 
 def get_fno_expiries():
-    """NSE/Angel One/5Paisa के लिए एकदम सही एक्सपायरी फॉर्मेट निकालता है"""
+    """NSE Expiry Format"""
     today = date.today()
-    
-    # Stock Monthly Expiry (Month's Last Thursday)
     year, month = today.year, today.month
     last_day = calendar.monthrange(year, month)[1]
     last_thursday = None
@@ -42,11 +40,8 @@ def get_fno_expiries():
                 last_thursday = d
                 break
 
-    # Angel One Format: "27AUG26" or "27 AUG"
     stock_exp_angel = last_thursday.strftime("%d%b%y").upper() 
-    stock_exp_simple = last_thursday.strftime("%d %b").upper()
-    
-    return stock_exp_angel, stock_exp_simple
+    return stock_exp_angel
 
 def safe_extract_val(val):
     try:
@@ -59,37 +54,36 @@ def safe_extract_val(val):
         return None
 
 def run_equity_fno_bot():
-    stock_exp_angel, stock_exp_simple = get_fno_expiries()
+    stock_exp_angel = get_fno_expiries()
 
-    # Broad Stocks & Indices Config
     stocks = {
         # --- INDICES ---
-        "NIFTY": {"ticker": "^NSEI", "step": 50},
-        "BANKNIFTY": {"ticker": "^NSEBANK", "step": 100},
+        "NIFTY": {"ticker": "^NSEI", "step": 50, "approx_premium_pct": 0.008},
+        "BANKNIFTY": {"ticker": "^NSEBANK", "step": 100, "approx_premium_pct": 0.008},
 
         # --- IT SECTOR ---
-        "TCS": {"ticker": "TCS.NS", "step": 50},
-        "INFY": {"ticker": "INFY.NS", "step": 20},
-        "WIPRO": {"ticker": "WIPRO.NS", "step": 5},
-        "HCLTECH": {"ticker": "HCLTECH.NS", "step": 20},
+        "TCS": {"ticker": "TCS.NS", "step": 50, "approx_premium_pct": 0.015},
+        "INFY": {"ticker": "INFY.NS", "step": 20, "approx_premium_pct": 0.015},
+        "WIPRO": {"ticker": "WIPRO.NS", "step": 5, "approx_premium_pct": 0.02},
+        "HCLTECH": {"ticker": "HCLTECH.NS", "step": 20, "approx_premium_pct": 0.015},
 
         # --- BANKING ---
-        "HDFCBANK": {"ticker": "HDFCBANK.NS", "step": 20},
-        "ICICIBANK": {"ticker": "ICICIBANK.NS", "step": 10},
-        "SBIN": {"ticker": "SBIN.NS", "step": 10},
-        "AXISBANK": {"ticker": "AXISBANK.NS", "step": 10},
+        "HDFCBANK": {"ticker": "HDFCBANK.NS", "step": 20, "approx_premium_pct": 0.015},
+        "ICICIBANK": {"ticker": "ICICIBANK.NS", "step": 10, "approx_premium_pct": 0.015},
+        "SBIN": {"ticker": "SBIN.NS", "step": 10, "is_fno": True, "approx_premium_pct": 0.018},
+        "AXISBANK": {"ticker": "AXISBANK.NS", "step": 10, "approx_premium_pct": 0.015},
 
         # --- CHEMICAL & AUTO ---
-        "SRF": {"ticker": "SRF.NS", "step": 50},
-        "AARTIIND": {"ticker": "AARTIIND.NS", "step": 10},
-        "DEEPAKNTR": {"ticker": "DEEPAKNTR.NS", "step": 20},
-        "MARUTI": {"ticker": "MARUTI.NS", "step": 100},
-        "M&M": {"ticker": "M&M.NS", "step": 20},
-        "TATAMOTORS": {"ticker": "TATAMOTORS.NS", "step": 10},
+        "SRF": {"ticker": "SRF.NS", "step": 50, "approx_premium_pct": 0.02},
+        "AARTIIND": {"ticker": "AARTIIND.NS", "step": 10, "approx_premium_pct": 0.02},
+        "DEEPAKNTR": {"ticker": "DEEPAKNTR.NS", "step": 20, "approx_premium_pct": 0.02},
+        "MARUTI": {"ticker": "MARUTI.NS", "step": 100, "approx_premium_pct": 0.013},
+        "M&M": {"ticker": "M&M.NS", "step": 20, "approx_premium_pct": 0.015},
+        "TATAMOTORS": {"ticker": "TATAMOTORS.NS", "step": 10, "approx_premium_pct": 0.02},
 
         # --- OTHERS ---
-        "RELIANCE": {"ticker": "RELIANCE.NS", "step": 20},
-        "TATASTEEL": {"ticker": "TATASTEEL.NS", "step": 2}
+        "RELIANCE": {"ticker": "RELIANCE.NS", "step": 20, "approx_premium_pct": 0.015},
+        "TATASTEEL": {"ticker": "TATASTEEL.NS", "step": 2, "approx_premium_pct": 0.02}
     }
 
     print("Scanning Equity & F&O Market...")
@@ -98,7 +92,7 @@ def run_equity_fno_bot():
         try:
             ticker = config["ticker"]
 
-            # 1. Daily Trend (Unadjusted price for accurate Spot level)
+            # 1. Daily Trend
             df_daily = yf.download(ticker, period="40d", interval="1d", auto_adjust=False, progress=False)
             if df_daily.empty or len(df_daily) < 20:
                 continue
@@ -148,19 +142,20 @@ def run_equity_fno_bot():
 
             emoji = "🟢" if signal == "BUY" else "🔴"
 
-            # Targets & Stop Loss
+            # Cash/Equity Targets & SL
             intra_target = close_15m * (1.01 if signal == "BUY" else 0.99)
             intra_sl = close_15m * (0.995 if signal == "BUY" else 1.005)
-            swing_target = close_15m * (1.04 if signal == "BUY" else 0.96)
-            swing_sl = close_15m * (0.98 if signal == "BUY" else 1.02)
 
-            # Rounding to Strike Price
+            # Option Calculations (CE for BUY, PE for SELL)
             strike = int(round(close_15m / config["step"]) * config["step"])
             option_type = "CE" if signal == "BUY" else "PE"
+            easy_search = f"{name} {strike} {option_type}"
 
-            # Perfect Search Strings for Brokers
-            angel_search = f"{name} {stock_exp_angel} {strike} {option_type}" # Ex: HDFCBANK 27AUG26 1700 PE
-            easy_search = f"{name} {strike} {option_type}"                  # Ex: HDFCBANK 1700 PE (Angel/5Paisa Direct)
+            # Estimated Premium Calculation (ATM Price Estimation)
+            est_premium = close_15m * config.get("approx_premium_pct", 0.015)
+            opt_buy_range = f"₹{est_premium * 0.95:.1f} - ₹{est_premium * 1.05:.1f}"
+            opt_target = est_premium * 1.30  # +30% Target
+            opt_sl = est_premium * 0.85      # -15% Stop Loss
 
             msg = f"""
 {emoji} <b>NSE EQUITY / F&O {signal} SIGNAL</b>
@@ -170,28 +165,25 @@ def run_equity_fno_bot():
 ⏱️ <b>Trigger:</b> 15-Min VWAP Aligned
 💰 <b>Current Spot Price:</b> ₹{close_15m:.2f}
 ━━━━━━━━━━━━━━━━━━
-🎯 <b>INTRADAY CALL (Cash):</b>
+🎯 <b>INTRADAY CASH CALL:</b>
 • <b>Action:</b> {signal}
 • <b>Target:</b> ₹{intra_target:.2f}
 • <b>Stop Loss:</b> ₹{intra_sl:.2f}
 
-📈 <b>SWING CALL (Short Term):</b>
-• <b>Action:</b> {signal}
-• <b>Target:</b> ₹{swing_target:.2f}
-• <b>Stop Loss:</b> ₹{swing_sl:.2f}
+🔥 <b>F&O OPTION TRADE ({option_type}):</b>
+• <b>Search Broker:</b> <code>{easy_search}</code>
+• <b>Est. Entry Price:</b> Buy around {opt_buy_range}
+• <b>Option Target (+30%):</b> ₹{opt_target:.2f}
+• <b>Option Stop Loss (-15%):</b> ₹{opt_sl:.2f}
 ━━━━━━━━━━━━━━━━━━
-🔍 <b>HOW TO SEARCH IN ANGEL ONE / 5PAISA:</b>
-• <b>Direct Search:</b> <code>{easy_search}</code>
-• <b>Full Contract Name:</b> <code>{angel_search}</code>
-━━━━━━━━━━━━━━━━━━
-🛡️ <i>Execute after market confirmation. Paper trade first.</i>
+🛡️ <i>Option Targets rely on Option Premium movements. Risk management is key.</i>
 """
             send_telegram_message(msg)
 
         except Exception as e:
             print(f"Error scanning {name}: {e}")
 
-    print("✅ Equity Scanning Completed Successfully!")
+    print("✅ F&O Signal Bot Ran Successfully!")
 
 if __name__ == "__main__":
     run_equity_fno_bot()
